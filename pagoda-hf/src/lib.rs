@@ -9,13 +9,24 @@
 //! * [`HfTokenizer`] — a HuggingFace BPE / Unigram tokenizer backed by the
 //!   `tokenizers` crate (`tokenizer.json`).
 //! * [`CandleModel`] — a [`pagoda::ModelEngine`] adapter over a Candle
-//!   causal LM (Llama family by default), loading real `config.json` +
-//!   safetensors weights and returning raw logits.
+//!   causal LM (Llama family), loading real `config.json` + safetensors
+//!   weights and returning raw logits.
 //! * [`CandleSession`] — the incremental half: each engine sequence gets its
-//!   own Candle KV-cache session and feeds every token exactly once (prompt
-//!   once, then one fresh token per decode step) instead of replaying the
-//!   full context. Sessions fork cheaply (shared tensor storage), which is
-//!   what powers checkpoint branching for agent-tree workloads.
+//!   own KV-cache session and feeds every token exactly once (prompt once,
+//!   then one fresh token per decode step) instead of replaying the full
+//!   context. Sessions fork cheaply (shared tensor storage), which is what
+//!   powers checkpoint branching for agent-tree workloads.
+//! * **Batched decode** — same-shape sessions (one fresh token each) advance
+//!   in a single `[B, 1]` forward through the vendored [`llama`] model, so a
+//!   batch reads the weights once per step instead of once per sequence.
+//! * **Cross-request KV grafting** — finished sessions' KV snapshots live in
+//!   a bounded [`KvVault`] keyed by token path; a later request whose prompt
+//!   shares a prefix grafts the cached tensors instead of recomputing them
+//!   (the physical half of RadixAttention).
+//!
+//! The model forward is a vendored, batch-capable Llama built on candle-nn
+//! primitives (see [`mod@llama`]): candle-transformers' own `Llama` keeps its
+//! KV cache private and drives one sequence per forward, which cannot batch.
 //!
 //! # Sandbox status
 //!
@@ -34,13 +45,18 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 
-pub use candle_core::{DType, Device, Tensor};
+pub use candle_core::{DType, Device};
 pub use candle_nn::VarBuilder;
-pub use candle_transformers::models::llama::{Cache as LlamaCache, Llama, LlamaConfig};
+pub use candle_transformers::models::llama::LlamaConfig;
+
+pub mod llama;
+pub use llama::{OwnedLlama, SessionKv};
+pub mod vault;
+pub use vault::KvVault;
 
 use pagoda::model::{ModelEngine, ModelSession};
 use pagoda::tokenizer::Tokenizer as SglTokenizer;
@@ -144,9 +160,8 @@ impl SglTokenizer for HfTokenizer {
 // ---------------------------------------------------------------------------
 
 /// A Candle causal-LM forward contract. Kept as a thin trait so the exact
-/// Candle release's `Llama` / `Mistral` / `Gemma` API (and its per-family KV
-/// cache type) lives in one spot and the [`ModelEngine`] adapter below stays
-/// independent of it.
+/// model family (and its per-session KV cache type) lives in one spot and the
+/// [`ModelEngine`] adapter below stays independent of it.
 ///
 /// The KV cache is explicit and external: one cache per decode session, minted
 /// by [`CandleCausalLM::new_cache`]. `Cache: Clone` is required so checkpoint
@@ -156,65 +171,114 @@ pub trait CandleCausalLM: Send + Sync {
     type Cache: Send + Clone;
     /// Mint a fresh, empty KV cache for one decode session.
     fn new_cache(&self, device: &Device) -> Result<Self::Cache>;
-    /// `input` has shape `[1, seq]`; `index_pos` is the position of the first
-    /// input token (RoPE offset + KV-cache append point). Returns logits whose
-    /// **last position** is what callers want (the exact rank varies across
-    /// Candle releases; callers flatten and take the trailing `vocab_size`).
-    fn forward(&self, input: &Tensor, index_pos: usize, cache: &mut Self::Cache)
-        -> Result<Tensor>;
+    /// Tokens already pushed through `cache`.
+    fn cache_len(cache: &Self::Cache) -> usize;
+    /// Push `tokens` through the model at the cache's current position and
+    /// return the last-position logits. `tokens` may be a whole prompt
+    /// (prefill) or any non-empty suffix.
+    fn forward_tokens(&self, tokens: &[u32], cache: &mut Self::Cache) -> Result<Vec<f32>>;
+    /// Advance many same-shape sessions (exactly one fresh token each) in a
+    /// single batched forward, returning one logits vector per session in
+    /// order. Default `None`: the engine falls back to per-session forwards.
+    fn session_forward_batch(
+        &self,
+        _sessions: &mut [Box<dyn ModelSession>],
+        _feeds: &[&[u32]],
+    ) -> Option<Vec<Vec<f32>>> {
+        None
+    }
+    /// Slice `cache` to its first `len` tokens for a prefix graft
+    /// (tensor-level RadixAttention). Causal attention makes a prefix view
+    /// bit-identical to a freshly computed one. Default `None`: the backend
+    /// offers no cross-request grafts.
+    fn cache_prefix(_cache: &Self::Cache, _len: usize) -> Option<Self::Cache> {
+        None
+    }
 }
 
-/// Candle 0.8's `Llama::forward` takes `&self` plus an external
-/// `&mut llama::Cache`; the runtime config is retained here so fresh
-/// per-session caches can be minted on demand.
+/// Llama family over the vendored [`OwnedLlama`]: per-session [`SessionKv`]
+/// caches plus a batched decode step.
 pub struct LlamaCausalLM {
-    model: Llama,
-    config: candle_transformers::models::llama::Config,
-    dtype: DType,
+    model: OwnedLlama,
 }
 
 impl CandleCausalLM for LlamaCausalLM {
-    type Cache = LlamaCache;
+    type Cache = SessionKv;
 
-    fn new_cache(&self, device: &Device) -> Result<Self::Cache> {
-        LlamaCache::new(true, self.dtype, &self.config, device)
-            .context("failed to build the Llama KV cache")
+    fn new_cache(&self, _device: &Device) -> Result<Self::Cache> {
+        Ok(self.model.new_cache())
     }
 
-    fn forward(
+    fn cache_len(cache: &Self::Cache) -> usize {
+        cache.len()
+    }
+
+    fn cache_prefix(cache: &Self::Cache, len: usize) -> Option<Self::Cache> {
+        cache.prefix(len)
+    }
+
+    fn forward_tokens(&self, tokens: &[u32], cache: &mut Self::Cache) -> Result<Vec<f32>> {
+        self.model.forward_tokens(tokens, cache)
+    }
+
+    fn session_forward_batch(
         &self,
-        input: &Tensor,
-        index_pos: usize,
-        cache: &mut Self::Cache,
-    ) -> Result<Tensor> {
-        self.model
-            .forward(input, index_pos, cache)
-            .map_err(anyhow::Error::from)
+        sessions: &mut [Box<dyn ModelSession>],
+        feeds: &[&[u32]],
+    ) -> Option<Vec<Vec<f32>>> {
+        if sessions.len() != feeds.len() || sessions.len() < 2 {
+            return None;
+        }
+        // The batched kernel advances exactly one token per session.
+        if feeds.iter().any(|f| f.len() != 1) {
+            return None;
+        }
+        // Recover the concrete sessions and their caches; leave the batch to
+        // the per-sequence path if any session is foreign or inconsistent.
+        let mut caches: Vec<&mut SessionKv> = Vec::with_capacity(sessions.len());
+        for s in sessions.iter_mut() {
+            let cs = s
+                .as_any_mut()?
+                .downcast_mut::<CandleSession<LlamaCausalLM>>()?;
+            if cs.fed != Self::cache_len(&cs.cache) {
+                return None;
+            }
+            caches.push(&mut cs.cache);
+        }
+        let tokens: Vec<u32> = feeds.iter().map(|f| f[0]).collect();
+        match self.model.batch_decode(&tokens, &mut caches) {
+            Ok(all) if all.len() == sessions.len() => {
+                // Bookkeeping pass: sessions were fed, advance counters and
+                // cache the logits for empty-feed re-reads.
+                for (s, logits) in sessions.iter_mut().zip(all.iter()) {
+                    let Some(cs) = s
+                        .as_any_mut()
+                        .and_then(|a| a.downcast_mut::<CandleSession<LlamaCausalLM>>())
+                    else {
+                        continue;
+                    };
+                    cs.fed += 1;
+                    cs.last_logits = Some(logits.clone());
+                    cs.tokens_fed.fetch_add(1, Ordering::Relaxed);
+                }
+                Some(all)
+            }
+            other => {
+                if let Err(e) = &other {
+                    eprintln!("[pagoda-hf] batched decode failed, using per-session forwards: {e:#}");
+                }
+                // Mid-forward failures (OOM, device loss) may leave some
+                // caches partially updated; the per-session path degrades
+                // those sequences to uniform logits instead of panicking.
+                None
+            }
+        }
     }
-}
-
-/// Reduce a Candle logits tensor of any rank to the last-position
-/// `[vocab_size]` vector. Candle 0.8 already reduces to `[b_sz, vocab]`;
-/// older releases return `[1, seq, vocab]`. The last-position logits are the
-/// trailing `vocab_size` values either way.
-fn last_position_logits(logits: &Tensor, vocab_size: usize) -> Result<Vec<f32>> {
-    let flat = logits
-        .contiguous()
-        .and_then(|t| t.flatten_all())
-        .and_then(|t| t.to_dtype(DType::F32))
-        .context("failed to flatten logits")?;
-    let n = flat.elem_count();
-    if n < vocab_size {
-        anyhow::bail!("logits too small: {n} elements, vocab is {vocab_size}");
-    }
-    flat.narrow(0, n - vocab_size, vocab_size)?
-        .to_vec1::<f32>()
-        .context("failed to materialise logits as Vec<f32>")
 }
 
 /// [`ModelEngine`] adapter over a Candle causal LM.
 ///
-/// Two contracts are served:
+/// Three contracts are served:
 ///
 /// * **Stateless** [`ModelEngine::forward`]: full-context replay with a fresh
 ///   cache per call (used by `Engine::score` and as the universal fallback).
@@ -222,6 +286,8 @@ fn last_position_logits(logits: &Tensor, vocab_size: usize) -> Result<Vec<f32>> 
 ///   a [`CandleSession`] with its own KV cache; the prompt is pushed once and
 ///   every decode step feeds exactly one token, so total model compute drops
 ///   from O(n^2) replay to O(n) feed.
+/// * **Batched** [`ModelEngine::session_forward_batch`]: same-shape sessions
+///   advance in one `[B, 1]` forward (Llama family only, for now).
 pub struct CandleModel<M: CandleCausalLM = LlamaCausalLM> {
     model: Arc<M>,
     device: Device,
@@ -230,6 +296,23 @@ pub struct CandleModel<M: CandleCausalLM = LlamaCausalLM> {
     /// calls (stateless + all sessions). Engine-level stats model a shared-KV
     /// backend; this counter is what the current backend really paid.
     tokens_fed: Arc<AtomicU64>,
+    /// Cross-request KV store: finished sessions' caches keyed by token path.
+    /// Later requests graft the longest matching prefix instead of
+    /// recomputing it (the physical half of RadixAttention; the core engine's
+    /// radix/APC caches are the logical half).
+    vault: Arc<Mutex<KvVault<M::Cache>>>,
+}
+
+/// Default cross-request KV vault capacity (entries, not tokens). Override
+/// with `PAGODA_KV_VAULT_ENTRIES`.
+const DEFAULT_KV_VAULT_ENTRIES: usize = 128;
+
+fn kv_vault_entries_from_env() -> usize {
+    std::env::var("PAGODA_KV_VAULT_ENTRIES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_KV_VAULT_ENTRIES)
 }
 
 impl CandleModel<LlamaCausalLM> {
@@ -274,16 +357,14 @@ impl CandleModel<LlamaCausalLM> {
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(weight_paths, dtype, &device)?
         };
-        let model = Llama::load(vb, &config).context("failed to load Llama weights")?;
+        let model = OwnedLlama::load(vb, &config, dtype, &device)
+            .context("failed to load Llama weights")?;
         Ok(Self {
-            model: Arc::new(LlamaCausalLM {
-                model,
-                config,
-                dtype,
-            }),
+            model: Arc::new(LlamaCausalLM { model }),
             device,
             vocab_size,
             tokens_fed: Arc::new(AtomicU64::new(0)),
+            vault: Arc::new(Mutex::new(KvVault::new(kv_vault_entries_from_env()))),
         })
     }
 
@@ -328,19 +409,11 @@ impl<M: CandleCausalLM + 'static> CandleModel<M> {
         if context.is_empty() {
             anyhow::bail!("empty context");
         }
+        let mut cache = self.model.new_cache(&self.device)?;
+        let logits = self.model.forward_tokens(context, &mut cache)?;
         self.tokens_fed
             .fetch_add(context.len() as u64, Ordering::Relaxed);
-
-        // Stateless path: fresh cache, single full-context pass at position 0.
-        let mut cache = self.model.new_cache(&self.device)?;
-        let input = Tensor::new(context, &self.device)
-            .and_then(|t| t.unsqueeze(0))
-            .context("failed to build the [1, seq] input tensor")?;
-        let logits = self
-            .model
-            .forward(&input, 0, &mut cache)
-            .context("candle forward failed")?;
-        last_position_logits(&logits, self.vocab_size)
+        Ok(logits)
     }
 }
 
@@ -369,7 +442,6 @@ impl<M: CandleCausalLM + 'static> ModelEngine for CandleModel<M> {
                 model: Arc::clone(&self.model),
                 cache,
                 fed: 0,
-                device: self.device.clone(),
                 vocab_size: self.vocab_size,
                 last_logits: None,
                 tokens_fed: Arc::clone(&self.tokens_fed),
@@ -380,44 +452,76 @@ impl<M: CandleCausalLM + 'static> ModelEngine for CandleModel<M> {
             }
         }
     }
+
+    fn session_forward_batch(
+        &self,
+        sessions: &mut [Box<dyn ModelSession>],
+        feeds: &[&[u32]],
+    ) -> Option<Vec<Vec<f32>>> {
+        self.model.session_forward_batch(sessions, feeds)
+    }
+
+    fn graft_session(&self, prompt: &[u32], max_len: usize) -> Option<Box<dyn ModelSession>> {
+        let (cache, covered) = self.vault.lock().ok()?.longest_prefix(prompt, max_len)?;
+        // The stored snapshot may cover more than the cap allows (a full-path
+        // key matching a shorter prompt); slice down to exactly `covered`.
+        let cache = M::cache_prefix(&cache, covered)?;
+        Some(Box::new(CandleSession {
+            model: Arc::clone(&self.model),
+            cache,
+            fed: covered,
+            vocab_size: self.vocab_size,
+            last_logits: None,
+            tokens_fed: Arc::clone(&self.tokens_fed),
+        }))
+    }
+
+    fn offer_session_kv(
+        &self,
+        tokens: &[u32],
+        prompt_len: usize,
+        session: Box<dyn ModelSession>,
+    ) {
+        let Some(cs) = session
+            .as_any()
+            .and_then(|a| a.downcast_ref::<CandleSession<M>>())
+        else {
+            return;
+        };
+        // Key entries by the physically fed path: the final sampled token is
+        // appended to the sequence but never pushed through the model, so the
+        // cache is usually one token shorter than `tokens`. Keying by the fed
+        // path guarantees a graft never overshoots the cached tensors, and it
+        // makes continue-this-conversation prompts (old path + new suffix)
+        // graft the entire previous turn.
+        let fed = M::cache_len(&cs.cache).min(tokens.len());
+        if fed == 0 {
+            return;
+        }
+        if let Ok(mut vault) = self.vault.lock() {
+            vault.offer(&tokens[..fed], prompt_len.min(fed), cs.cache.clone());
+        }
+    }
 }
 
-/// One sequence's incremental decode state: its own Candle KV cache plus the
-/// number of tokens already pushed through the model.
+/// One sequence's incremental decode state: its own KV cache plus the number
+/// of tokens already pushed through the model.
 ///
-/// Feeding discipline (driven by candle-transformers 0.8's mask handling):
-///
-/// * **First call** (empty cache): the whole prompt goes through in one pass
-///   at `index_pos = 0` — the causal mask is square, everything lines up.
-/// * **Later calls** (non-empty cache): tokens are fed one at a time. Candle's
-///   cached mask is `[seq, seq]` and cannot stretch over a longer KV history
-///   (`seq_len > 1` with `index_pos > 0` breaks broadcasting), while
-///   `seq_len == 1` skips masking entirely — which is exactly the decode
-///   shape. Multi-token suffixes are looped.
+/// Feeding discipline: the first call carries the whole prompt (one masked
+/// prefill pass), later calls carry the fresh suffix (one token during
+/// continuous batching, but any non-empty suffix is accepted). Same-shape
+/// sessions are advanced by the batched path instead; this per-session
+/// forward handles everything else.
 pub struct CandleSession<M: CandleCausalLM = LlamaCausalLM> {
     model: Arc<M>,
     cache: M::Cache,
     fed: usize,
-    device: Device,
     vocab_size: usize,
     last_logits: Option<Vec<f32>>,
     tokens_fed: Arc<AtomicU64>,
 }
 
 impl<M: CandleCausalLM> CandleSession<M> {
-    /// Run one Candle forward over `tokens` starting at `index_pos` and return
-    /// last-position logits.
-    fn run(&mut self, tokens: &[u32], index_pos: usize) -> Result<Vec<f32>> {
-        let input = Tensor::new(tokens, &self.device)
-            .and_then(|t| t.unsqueeze(0))
-            .context("failed to build the [1, seq] input tensor")?;
-        let logits = self
-            .model
-            .forward(&input, index_pos, &mut self.cache)
-            .context("candle forward failed")?;
-        last_position_logits(&logits, self.vocab_size)
-    }
-
     fn try_forward(&mut self, new_tokens: &[u32]) -> Result<Vec<f32>> {
         if new_tokens.is_empty() {
             return self
@@ -425,21 +529,9 @@ impl<M: CandleCausalLM> CandleSession<M> {
                 .clone()
                 .context("session has no cached logits yet");
         }
+        let logits = self.model.forward_tokens(new_tokens, &mut self.cache)?;
         self.tokens_fed
             .fetch_add(new_tokens.len() as u64, Ordering::Relaxed);
-
-        let logits = if self.fed == 0 {
-            // Single-shot prefill: square causal mask over an empty cache.
-            self.run(new_tokens, 0)?
-        } else {
-            // Decode shape: one token per call so candle 0.8's [seq, seq]
-            // mask never has to cover a longer KV history.
-            let mut logits = Vec::new();
-            for (i, tok) in new_tokens.iter().enumerate() {
-                logits = self.run(std::slice::from_ref(tok), self.fed + i)?;
-            }
-            logits
-        };
         self.fed += new_tokens.len();
         Ok(logits)
     }
@@ -463,6 +555,14 @@ impl<M: CandleCausalLM + 'static> ModelSession for CandleSession<M> {
         }
     }
 
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
     fn fork(&self) -> Option<Box<dyn ModelSession>> {
         // Candle tensors are Arc-shared and immutable; appends concatenate
         // into fresh tensors, so the cloned cache is an independent branch
@@ -471,7 +571,6 @@ impl<M: CandleCausalLM + 'static> ModelSession for CandleSession<M> {
             model: Arc::clone(&self.model),
             cache: self.cache.clone(),
             fed: self.fed,
-            device: self.device.clone(),
             vocab_size: self.vocab_size,
             last_logits: self.last_logits.clone(),
             tokens_fed: Arc::clone(&self.tokens_fed),

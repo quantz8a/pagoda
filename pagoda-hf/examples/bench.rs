@@ -118,11 +118,15 @@ fn main() -> Result<()> {
         .map(|i| WriteRequest::new(format!("Request number {i}. {prompt}"), greedy.clone()))
         .collect();
     let fed_before = fed.load(Ordering::Relaxed);
+    let stats_before = engine.stats();
     let t = Instant::now();
     let outs = engine.generate_batch(&reqs);
     let batch_ms = t.elapsed().as_secs_f64() * 1e3;
     let fed_batch = fed.load(Ordering::Relaxed) - fed_before;
     let total_out: usize = outs.iter().map(|o| o.output_token_ids.len()).sum();
+    let stats = engine.stats();
+    let decode_steps = stats.total_decode_steps - stats_before.total_decode_steps;
+    let decode_calls = stats.total_decode_calls - stats_before.total_decode_calls;
 
     let out = serde_json::json!({
         "engine": format!("pagoda-hf (candle, {} {})",
@@ -140,6 +144,9 @@ fn main() -> Result<()> {
             "output_tokens": total_out,
             "output_tok_per_s": (total_out as f64 / (batch_ms / 1e3)).round(),
             "model_tokens_fed": fed_batch,
+            "decode_steps": decode_steps,
+            "decode_calls": decode_calls,
+            "decode_batch_factor": (decode_steps as f64 / decode_calls.max(1) as f64 * 100.0).round() / 100.0,
         },
     });
     println!("{}", serde_json::to_string_pretty(&out)?);

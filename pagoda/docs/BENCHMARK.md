@@ -68,6 +68,58 @@ torch_native 后端；cold 含一次性 JIT 编译。
    pagoda GPU 通路的意义在于**已打通且数值正确**（F32 下 logits 与 CPU
    逐位一致），性能工程是下一步。
 
+## 第二轮（2026-09-30 · P3 批量 matmul 落地）
+
+pagoda-hf 换用自研批量 Llama（`pagoda-hf/src/llama.rs`），引擎解码阶段把
+「恰好缺一个 token」的会话拼成 `[B,1]` 一次前向。正确性：**与 candle 官方
+Llama 逐 bit 一致**（F32 与 GPU F16 下 max |logit diff| 均为 0.0e0）；批量
+与逐条输出逐 token 相等（CPU F32 精确断言，F16 允许近邻翻转）；两次批量运行
+完全确定。效率指标 `decode_batch_factor` = 逻辑解码步 / 物理模型调用：
+
+| 场景 | decode_batch_factor | batch-8 吞吐 | 对照（批量前） |
+| --- | ---: | ---: | ---: |
+| tiny 模型 CPU F32 | 6.24x（256 步 / 41 次） | **3103 tok/s** | 2218 tok/s（+40%） |
+| tiny 模型 GPU F16 | 6.24x | 2519 tok/s | —（此前无 GPU 批量数） |
+| 1.1B CPU F32 | 6.24x | 5.2 tok/s | 5.0 tok/s（持平） |
+| 1.1B GPU F16 | 6.24x | 4.0 tok/s | 4.0 tok/s（持平） |
+
+解读：
+
+1. **框架开销主导的场景直接受益**：tiny 模型 +40%，物理调用数收缩 6.24 倍。
+2. **大模型墙钟暂持平是预期内的**：此时每步耗时由 kernel 执行/发射主导
+   （candle 逐算子朴素 kernel + 共享 CPU 上的发射延迟），批量只消除了
+   调度与重复读权重的开销。补齐+遮罩的通用注意力每步还要做 O(B×L) 的
+   KV 收集，在 GPU 上约与省下的发射数相抵。
+3. **红利释放在下一步**：CUDA Graph 把整步录制成一次发射、paged attention
+   融合 kernel 消除 KV 收集后，批量通路的全部收益才会落袋。数据通路已经
+   就绪（一次调用推进一个批次），这正是本步的目的。
+
+## 第三轮（2026-09-30 · P3 张量级前缀嫁接落地）
+
+完赛会话的 KV 张量收进跨请求仓库 `KvVault`，新请求按最长前缀嫁接切片
+（真·RadixAttention）。此轮指标是**物理投喂 token 数**（机器无关的精确值）
+与同机重测的 warm 墙钟：
+
+| 场景（tiny 模型 e2e） | 嫁接前 | 嫁接后 | 省掉 |
+| --- | ---: | ---: | ---: |
+| 重复 6-token prompt + 16 生成 | 喂 21 token | **喂 16 token** | 24% |
+| 创建 checkpoint（树干已在库） | 喂 6 token | **喂 1 token** | 83% |
+
+| 同机重测（共享开发机） | 嫁接前 | 嫁接后 |
+| --- | ---: | ---: |
+| tiny CPU warm | 14.3 ms | **13.3 ms** |
+| 1.1B GPU F16 warm | 9009 ms | **8494 ms（-5.7%）** |
+
+解读：
+
+1. **134-token prompt 的 prefill 物理上归零**（嫁接 133 token，只喂 1 个 +
+   31 步 decode）——warm 的 5.7% 正好是 prefill 在整程里的份额；prompt
+   越长省得越多，agent 场景的数千 token 系统提示才是主战场（TTFT 整段消失）。
+2. **正确性照旧锁死**：嫁接后输出与冷跑逐 token 相等（e2e 硬断言），
+   GPU F16 下 parity 仍为 0.0e0；故障请求的 KV 永不入库（核心测试断言）。
+3. checkpoint 创建从"预填充整段树干"变成"嫁接 + 喂 1 token"，
+   分支原语的成本几乎消失。
+
 ## 环境税实录（为什么"一键"值钱）
 
 让 SGLang 在这台盒子跑起来的完整修复链（每一步都阻塞）：
@@ -112,7 +164,7 @@ python pagoda-hf/bench/bench_sglang.py --repo TinyLlama/TinyLlama-1.1B-Chat-v1.0
 
 | 发现 | 路线图项 |
 | --- | --- |
-| 批量 matmul 缺口（batch 落后 4×） | P3：batched prefill/decode |
+| 批量 matmul 缺口（batch 落后 4×） | ✅ P3 已落地：batched decode（物理调用 6.24× 收缩，tiny +40%；大模型红利待 CUDA Graph/融合 kernel 释放） |
 | 命中前缀仍重算（warm≈cold） | P3：张量级 KV 嫁接（真·RadixAttention） |
 | GPU 后端缺失 | ✅ 已打通（`--features cuda` + `PAGODA_DEVICE=cuda` + `PAGODA_DTYPE=f16`）；性能工程（CUDA Graph/融合 kernel）留待 P3 |
 | CPU 全链路可用 + 极低框架税 | 已验证的差异化优势 |

@@ -102,6 +102,9 @@ pub struct Engine<M: ModelEngine, T: Tokenizer> {
     next_checkpoint_id: u64,
     total_requests: u64,
     total_forward: u64,
+    total_decode_steps: u64,
+    total_decode_calls: u64,
+    total_graft_tokens: u64,
     total_prefill_chunks: u64,
     total_prompt_tokens: u64,
     total_prefill_tokens: u64,
@@ -183,6 +186,9 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
             next_checkpoint_id: 0,
             total_requests: 0,
             total_forward: 0,
+            total_decode_steps: 0,
+            total_decode_calls: 0,
+            total_graft_tokens: 0,
             total_prefill_chunks: 0,
             total_prompt_tokens: 0,
             total_prefill_tokens: 0,
@@ -210,6 +216,9 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
         EngineStats {
             total_requests: self.total_requests,
             total_forward: self.total_forward,
+            total_decode_steps: self.total_decode_steps,
+            total_decode_calls: self.total_decode_calls,
+            model_graft_tokens: self.total_graft_tokens,
             radix_nodes: self.radix.num_nodes(),
             radix_queries: self.radix.num_queries() as u64,
             radix_hit_queries: self.radix.hit_queries() as u64,
@@ -316,10 +325,122 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
                 break;
             }
 
-            // Decode phase: one token for every ready sequence.
+            // Decode phase: one token for every ready sequence. Sequences
+            // whose session is missing exactly one token are advanced in a
+            // single batched model call when the backend supports it:
+            // decode is weight-bandwidth-bound, so one [B, 1] forward costs
+            // roughly the memory traffic of one [1, 1] forward.
             let mut next = Vec::with_capacity(active.len());
+
+            // Length gate first: sequences at their token budget finalize
+            // without touching the model.
+            let mut pending: Vec<Seq> = Vec::with_capacity(active.len());
             for seq in active.drain(..) {
-                match self.advance(seq) {
+                if seq.output.len() >= seq.sampling.max_tokens {
+                    outputs.push(self.finalize(seq, FinishReason::Length));
+                } else {
+                    pending.push(seq);
+                }
+            }
+
+            // Partition batch candidates: a session that is missing exactly
+            // one token. Multi-token feeds (first step after prefill) and
+            // empty feeds (fresh checkpoint branches) stay on the
+            // per-sequence path; stateless sequences always do.
+            let mut batch_pos: Vec<usize> = Vec::new();
+            let mut batch_sessions: Vec<Box<dyn ModelSession>> = Vec::new();
+            let mut batch_feeds: Vec<Vec<TokenId>> = Vec::new();
+            for (i, seq) in pending.iter_mut().enumerate() {
+                let Some(session) = seq.session.as_ref() else {
+                    continue;
+                };
+                let fed = session.context_len();
+                if fed > seq.tokens.len() || seq.tokens.len() - fed != 1 {
+                    continue;
+                }
+                batch_feeds.push(vec![seq.tokens[fed]]);
+                batch_pos.push(i);
+                batch_sessions.push(seq.session.take().expect("session checked above"));
+            }
+
+            let mut logits_slots: Vec<Option<Vec<f32>>> =
+                (0..pending.len()).map(|_| None).collect();
+            if !batch_sessions.is_empty() {
+                let batched: Option<Vec<Vec<f32>>> = if batch_sessions.len() >= 2 {
+                    let feed_refs: Vec<&[TokenId]> =
+                        batch_feeds.iter().map(|f| f.as_slice()).collect();
+                    self.model
+                        .session_forward_batch(&mut batch_sessions, &feed_refs)
+                        .map(|all| {
+                            self.total_decode_calls += 1;
+                            all
+                        })
+                } else {
+                    None
+                };
+                let logits = match batched {
+                    Some(all) if all.len() == batch_pos.len() => all,
+                    Some(all) => {
+                        // Length-mismatch recovery: the sessions already
+                        // consumed their feeds, so re-read cached last
+                        // logits with an empty feed instead of double-feeding.
+                        let mut fixed = Vec::with_capacity(batch_sessions.len());
+                        for (i, session) in batch_sessions.iter_mut().enumerate() {
+                            fixed.push(match all.get(i) {
+                                Some(lg) => lg.clone(),
+                                None => session.forward(&[]),
+                            });
+                        }
+                        fixed
+                    }
+                    None => {
+                        // Unbatched fallback: one model call per session.
+                        let mut all = Vec::with_capacity(batch_sessions.len());
+                        for (session, feed) in batch_sessions.iter_mut().zip(&batch_feeds) {
+                            self.total_decode_calls += 1;
+                            all.push(session.forward(feed));
+                        }
+                        all
+                    }
+                };
+                for (pos, logits) in batch_pos.iter().zip(logits) {
+                    logits_slots[*pos] = Some(logits);
+                }
+                for (pos, session) in batch_pos.iter().zip(batch_sessions) {
+                    pending[*pos].session = Some(session);
+                }
+            }
+
+            for (i, mut seq) in pending.into_iter().enumerate() {
+                self.total_forward += 1;
+                self.total_decode_steps += 1;
+                let logits = match logits_slots[i].take() {
+                    Some(logits) => logits,
+                    None => {
+                        // Per-sequence path: session with a multi-token or
+                        // empty feed, or stateless full replay. A misbehaving
+                        // session (context ahead of the sequence) is dropped
+                        // rather than panicking the engine.
+                        let use_session = matches!(
+                            seq.session.as_ref(),
+                            Some(s) if s.context_len() <= seq.tokens.len()
+                        );
+                        if use_session {
+                            let session =
+                                seq.session.as_mut().expect("session checked above");
+                            let fed = session.context_len();
+                            if fed < seq.tokens.len() {
+                                self.total_decode_calls += 1;
+                            }
+                            session.forward(&seq.tokens[fed..])
+                        } else {
+                            seq.session = None;
+                            self.total_decode_calls += 1;
+                            self.model.forward(&seq.tokens)
+                        }
+                    }
+                };
+                match self.advance_with_logits(seq, logits) {
                     Advance::Running(s) => next.push(s),
                     Advance::Done(out) => outputs.push(out),
                 }
@@ -364,13 +485,36 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
             self.prefill_chunk(&mut seq, chunk);
         }
         self.publish_prefix(&seq.tokens, &seq.locs);
-        // Model-side pinned trunk: push the whole checkpoint through one
-        // session so branches can fork its KV state instead of recomputing
-        // the prefix. Backends without sessions keep the stateless path.
-        let session = self.model.begin_session().map(|mut s| {
-            s.forward(&seq.tokens);
-            s
-        });
+        // Model-side pinned trunk: keep a session holding the checkpoint KV
+        // so branches fork it instead of recomputing the prefix. Graft from
+        // the backend's vault first (the trunk may repeat an earlier path),
+        // then feed only the missing suffix; the cap keeps >=1 fed token so
+        // the trunk's last-position logits exist for empty-continuation
+        // branches. Backends without sessions keep the stateless path.
+        let mut session = match self
+            .model
+            .graft_session(&seq.tokens, seq.tokens.len().saturating_sub(1))
+        {
+            Some(s) => {
+                self.total_graft_tokens += s.context_len() as u64;
+                Some(s)
+            }
+            None => self.model.begin_session(),
+        };
+        if let Some(s) = session.as_mut() {
+            let fed = s.context_len();
+            if fed < seq.tokens.len() {
+                s.forward(&seq.tokens[fed..]);
+            }
+        }
+        // Also offer the trunk to the backend's vault, so unrelated future
+        // requests (not just checkpoint branches) can graft this prefix.
+        if !seq.tokens.is_empty() {
+            if let Some(fork) = session.as_ref().and_then(|s| s.fork()) {
+                self.model
+                    .offer_session_kv(&seq.tokens, seq.tokens.len(), fork);
+            }
+        }
         // The request-side references are kept as the checkpoint pin: the
         // blocks stay resident (immune to prefix-cache eviction) until
         // `drop_checkpoint`.
@@ -539,7 +683,22 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
             prefill_pos: prefix_hit,
             blocks: Vec::new(),
             locs: Vec::with_capacity(prompt_len + max_new),
-            session: self.model.begin_session(),
+            session: {
+                // Tensor-level prefix reuse (true RadixAttention): ask the
+                // backend for a session whose KV already covers a prefix of
+                // this prompt. The cap guarantees the first step still feeds
+                // >=1 token (which produces the first-step logits).
+                match self
+                    .model
+                    .graft_session(&prompt, prompt_len.saturating_sub(1))
+                {
+                    Some(s) => {
+                        self.total_graft_tokens += s.context_len() as u64;
+                        Some(s)
+                    }
+                    None => self.model.begin_session(),
+                }
+            },
         };
 
         for slot in &prefix_slots {
@@ -787,29 +946,11 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
         logits.len() == self.model.vocab_size() && logits.iter().all(|x| x.is_finite())
     }
 
-    fn advance(&mut self, mut seq: Seq) -> Advance {
-        if seq.output.len() >= seq.sampling.max_tokens {
-            return Advance::Done(self.finalize(seq, FinishReason::Length));
-        }
-
-        self.total_forward += 1;
-        // Incremental path: a session-backed model only receives the tokens it
-        // has not seen yet (the whole prompt on the first step, then one fresh
-        // token per step). Stateless models keep the full-replay contract.
-        let use_session = matches!(
-            seq.session.as_ref(),
-            Some(s) if s.context_len() <= seq.tokens.len()
-        );
-        let mut logits = if use_session {
-            let session = seq.session.as_mut().expect("session checked above");
-            let fed = session.context_len();
-            session.forward(&seq.tokens[fed..])
-        } else {
-            // A misbehaving session (context ahead of the sequence) is dropped
-            // rather than panicking the engine.
-            seq.session = None;
-            self.model.forward(&seq.tokens)
-        };
+    /// Per-sequence decode tail shared by the batched and unbatched paths:
+    /// validate the logits, apply sampling penalties and grammar masks,
+    /// sample one token, materialize it into paged KV, and check the finish
+    /// conditions.
+    fn advance_with_logits(&mut self, mut seq: Seq, mut logits: Vec<f32>) -> Advance {
         if !self.logits_sane(&logits) {
             self.total_faults += 1;
             return Advance::Done(self.finalize(seq, FinishReason::Fault));
@@ -866,6 +1007,15 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
     }
 
     fn finalize(&mut self, seq: Seq, reason: FinishReason) -> GenerationOutput {
+        // Hand the finished session's KV to the backend's vault for
+        // tensor-level prefix grafts by later requests — unless the sequence
+        // faulted (its KV may be corrupt). Nothing reads `seq.session` after.
+        if reason != FinishReason::Fault {
+            if let Some(session) = seq.session {
+                self.model
+                    .offer_session_kv(&seq.tokens, seq.prompt_len, session);
+            }
+        }
         // Index the full token path into the prefix cache, adopting new blocks
         // with a cache base reference, then release this request's reference
         // on every block it holds.
@@ -962,6 +1112,16 @@ fn pop_next(waiting: &mut VecDeque<Seq>, policy: SchedulePolicy) -> Option<Seq> 
 pub struct EngineStats {
     pub total_requests: u64,
     pub total_forward: u64,
+    /// Logical per-sequence decode advances (one per token per sequence).
+    pub total_decode_steps: u64,
+    /// Physical model invocations during the decode phase. A batched step
+    /// counts once no matter how many sequences it advanced.
+    pub total_decode_calls: u64,
+    /// Prompt tokens never fed to the model because the backend grafted a
+    /// cached KV prefix (tensor-level RadixAttention). Logical prefix hits
+    /// (radix/APC) are counted separately in `radix_hit_tokens` /
+    /// `apc_hit_tokens`; this is the physical recompute that disappeared.
+    pub model_graft_tokens: u64,
     pub radix_nodes: usize,
     pub radix_queries: u64,
     pub radix_hit_queries: u64,
@@ -1018,6 +1178,17 @@ impl EngineStats {
             0.0
         } else {
             self.total_forward as f64 / self.total_output_tokens as f64
+        }
+    }
+
+    /// Logical decode steps fused per physical model call. 1.0 means every
+    /// sequence ran its own forward; 8.0 means eight sequences shared one
+    /// batched forward on average — the continuous-batching win.
+    pub fn decode_batch_factor(&self) -> f64 {
+        if self.total_decode_calls == 0 {
+            0.0
+        } else {
+            self.total_decode_steps as f64 / self.total_decode_calls as f64
         }
     }
 

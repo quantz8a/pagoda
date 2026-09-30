@@ -1,9 +1,11 @@
 // Copyright (C) 2026  quantz8a
 // SPDX-License-Identifier: Apache-2.0
-//! P1+P2 end-to-end verification: a real HuggingFace tokenizer + real Candle
-//! weights driving the full pagoda engine (prefix cache, batching, sampling),
-//! with incremental KV sessions (each token fed to the model exactly once)
-//! and checkpoint forking (branch over a shared trunk without recompute).
+//! P1+P2+P3 end-to-end verification: a real HuggingFace tokenizer + real
+//! Candle weights driving the full pagoda engine (prefix cache, batching,
+//! sampling), with incremental KV sessions (each token fed to the model
+//! exactly once), tensor-level prefix grafting (a repeat request starts from
+//! the finished session's cached KV instead of recomputing the prompt), and
+//! checkpoint forking (branch over a shared trunk without recompute).
 //!
 //! Run on a networked machine:
 //!
@@ -28,7 +30,7 @@ use std::sync::atomic::Ordering;
 fn main() -> Result<()> {
     const REPO: &str = "hf-internal-testing/tiny-random-LlamaForCausalLM";
 
-    println!("==> [1/4] download + load HF tokenizer from {REPO}");
+    println!("==> [1/5] download + load HF tokenizer from {REPO}");
     let tokenizer = HfTokenizer::from_hub(REPO)?;
     println!(
         "    vocab_size={} eos={} bos={:?}",
@@ -47,7 +49,7 @@ fn main() -> Result<()> {
     let continuation = " the largest city";
     let continuation_len = tokenizer.encode(continuation).len();
 
-    println!("==> [2/4] download config + safetensors weights, load on PAGODA_DEVICE (default cpu, F32)");
+    println!("==> [2/5] download config + safetensors weights, load on PAGODA_DEVICE (default cpu, F32)");
     let device = CandleModel::device_from_env()?;
     println!("    device: {device:?}");
     let model = CandleModel::llama_from_hub_on(REPO, device)?;
@@ -144,8 +146,18 @@ fn main() -> Result<()> {
         out1.output_token_ids, out2.output_token_ids,
         "greedy decoding must be deterministic across cache hit/miss"
     );
+    // Tensor-level graft: the warm request starts from the first request's
+    // cached prompt KV (capped at prompt_len - 1 so the first step still
+    // produces logits), then feeds 1 suffix token + one per decode step.
+    assert_eq!(
+        fed_warm as usize,
+        decode_steps,
+        "warm request should feed only 1 suffix token + {} decode steps, not the prompt",
+        decode_steps - 1
+    );
     println!(
-        "    model tokens fed: {fed_warm} (session recomputes the hit prefix once; cross-sequence KV sharing is the P3 milestone)"
+        "    model tokens fed: {fed_warm} (grafted {} cached prompt tokens; cold was {fed_cold})",
+        ids.len() - 1
     );
 
     println!("==> [5/5] checkpoint fork: shared trunk, branched continuation");
@@ -154,9 +166,12 @@ fn main() -> Result<()> {
     let fed_before = fed.load(Ordering::Relaxed);
     let ckpt = engine.create_checkpoint(trunk);
     let fed_ckpt = fed.load(Ordering::Relaxed) - fed_before;
+    // The trunk is already in the KV vault (the warm request offered it), so
+    // checkpoint creation grafts trunk_len - 1 tokens and feeds only the
+    // final one to materialize the trunk's last-position logits.
     assert_eq!(
-        fed_ckpt as usize, trunk_len,
-        "checkpoint creation prefills the trunk exactly once"
+        fed_ckpt as usize, 1,
+        "checkpoint creation grafts the cached trunk KV and feeds one token"
     );
 
     let fed_before = fed.load(Ordering::Relaxed);
@@ -211,18 +226,27 @@ fn main() -> Result<()> {
 
     let stats = engine.stats();
     println!(
-        "==> stats: saved={} skip={:.2} faults={} rejected={} kv_util={:.2}",
+        "==> stats: saved={} skip={:.2} grafted={} faults={} rejected={} kv_util={:.2}",
         stats.compute_saved_tokens(),
         stats.prefill_skip_ratio(),
+        stats.model_graft_tokens,
         stats.faulted_requests,
         stats.rejected_requests,
         stats.kv_utilization()
     );
     assert_eq!(stats.faulted_requests, 0);
     assert_eq!(stats.rejected_requests, 0);
+    // Warm request grafts prompt_len - 1; checkpoint creation grafts
+    // trunk_len - 1 (same prompt). Nothing else grafts.
+    assert_eq!(
+        stats.model_graft_tokens as usize,
+        2 * (ids.len() - 1),
+        "expected graft hits from the warm request and checkpoint creation"
+    );
 
     println!();
     println!("P1 VERIFICATION OK — real tokenizer + real weights drive pagoda end to end");
     println!("P2 VERIFICATION OK — incremental KV sessions + checkpoint fork verified");
+    println!("P3 VERIFICATION OK — tensor-level prefix grafting (RadixAttention) verified");
     Ok(())
 }

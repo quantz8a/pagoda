@@ -17,6 +17,8 @@
 | 7 | [调度与指标](07-scheduling-and-metrics.md) | continuous batching、chunked prefill、四轴指标 |
 | 8 | [增量 KV 会话](08-kv-session.md) | 每个 token 只算一次：O(n²) 全量重放 → O(n) 会话 + KV 分叉 |
 | 9 | [开源协议：为什么用 Apache-2.0](09-open-source-license.md) | 宽松开源、怎么自由使用和贡献 |
+| 10 | [批量解码](10-batched-decode.md) | 一次前向养活整个批次：权重只读一遍，decode_batch_factor 可观测 |
+| 11 | [张量级前缀嫁接](11-tensor-kv-grafting.md) | 真·RadixAttention：KV 张量本体跨请求复用，prompt 物理上零重算 |
 
 ## 怎么用这份文档
 
@@ -35,7 +37,7 @@
 ```powershell
 cd pagoda
 powershell -ExecutionPolicy Bypass -File scripts\quickstart.ps1   # 一键：构建+测试+演示
-cargo test --offline                                        # 78 项测试全绿即环境 OK
+cargo test --offline                                        # 85 项测试全绿即环境 OK
 cargo run --offline --bin pagoda -- sample -p "你好" --repeat 2
 cargo run --offline --bin pagoda -- serve --port 8080       # HTTP 服务
 ```

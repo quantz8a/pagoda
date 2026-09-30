@@ -16,6 +16,11 @@ compact, testable reference implementation:
 - **KV checkpoints**: pin a shared prefix (system prompt / agent trunk) and
   branch many generations off it with a guaranteed full hit — the primitive for
   agent-cluster / tree-search workloads (`POST /checkpoint` + friends)
+- **Tensor-level prefix grafting** (true RadixAttention): finished sessions' KV
+  snapshots live in a bounded cross-request vault; a later request whose prompt
+  shares a prefix grafts the cached tensors instead of recomputing them
+- **Batched decode**: same-shape sessions advance in one `[B, 1]` forward
+  (`decode_batch_factor` observable in `/stats` and the CLI)
 - **Continuous batching** scheduler with chunked prefill and a waiting queue
 - **Paged KV cache** with reference counting and copy-on-write
 - **Sampling**: temperature / top-k / top-p / frequency & presence penalties
@@ -31,7 +36,7 @@ compact, testable reference implementation:
 ```powershell
 cd pagoda
 
-# one-click: build + 72 tests + demos
+# one-click: build + 85 tests + demos
 powershell -ExecutionPolicy Bypass -File scripts\quickstart.ps1   # bash: scripts/quickstart.sh
 
 # run the test suite
@@ -118,7 +123,8 @@ pagoda/
 │   └── bin/pagoda.rs
 ├── scripts/            # one-click quickstart + agent-cluster demo (ps1/sh)
 └── tests/              # engine / fault / admission / apc / checkpoint /
-                        # property / grammar / system tests (72 total)
+                        # session / batch / graft / property / grammar /
+                        # system tests (85 total)
 ```
 
 ## Design notes

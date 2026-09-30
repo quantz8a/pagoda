@@ -109,6 +109,22 @@ pub fn handle<E: ServingEngine>(
                 ("total_prefill_tokens".to_string(), Value::Number(s.total_prefill_tokens as f64)),
                 ("total_output_tokens".to_string(), Value::Number(s.total_output_tokens as f64)),
                 ("total_forward".to_string(), Value::Number(s.total_forward as f64)),
+                (
+                    "total_decode_steps".to_string(),
+                    Value::Number(s.total_decode_steps as f64),
+                ),
+                (
+                    "total_decode_calls".to_string(),
+                    Value::Number(s.total_decode_calls as f64),
+                ),
+                (
+                    "decode_batch_factor".to_string(),
+                    Value::Number(s.decode_batch_factor()),
+                ),
+                (
+                    "model_graft_tokens".to_string(),
+                    Value::Number(s.model_graft_tokens as f64),
+                ),
                 ("radix_nodes".to_string(), Value::Number(s.radix_nodes as f64)),
                 (
                     "radix_hit_tokens".to_string(),

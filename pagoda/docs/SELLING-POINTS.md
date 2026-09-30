@@ -44,6 +44,26 @@ P2 起 checkpoint 更进一步：`ModelSession::fork()` 让分支直接**复印�
 契约极小（`context_len` / `forward(新后缀)` / `fork`），无状态后端零改动兼容；
 会话异常自动回退重放，正确性永远优先。
 
+### 3.6 批量解码：一次前向养活整个批次
+
+引擎把「恰好缺一个 token」的会话拼成 `[B,1]` 一次前向（不支持的后端自动回退，
+语义不变）；pagoda-hf 内置自研批量 Llama（candle-nn 原语，与官方实现对拍到
+**逐 bit 一致**），私有 KV 补齐+遮罩拼批、原子提交（失败可安全回退）。
+实测物理调用收缩 6.24×，框架开销场景吞吐 +40%；`decode_batch_factor` 进
+/stats 与 CLI，收益可观测、可断言。CUDA Graph 与融合 kernel 是下一跳。
+
+### 3.7 张量级前缀嫁接：真·RadixAttention
+
+逻辑前缀缓存只记"算过"；pagoda 把完赛会话的 **KV 张量本体**收进跨请求仓库
+（`KvVault`，Arc 快照零拷贝、LRU 封顶、故障请求永不入库），新请求最长前缀
+匹配后直接切片嫁接——prompt 的 prefill **物理上消失**（重复请求 21→16 token，
+checkpoint 创建 6→1 token；134-token prompt 的 warm prefill 归零）。
+与逻辑缓存（radix/APC）正交、与批量解码自然复合（嫁接上限刻意留 1 个待喂
+token，首步自动落入批量通路）。输出与冷跑逐 token 相等是硬断言。
+
+为什么值钱：agent 集群的系统提示动辄几千 token，每个 worker 都重算一遍是
+纯烧钱；嫁接让"共享系统提示"从逻辑省算力变成物理零 prefill。
+
 ### 4. 零依赖约束解码
 
 regex（Thompson NFA）+ JSON（下推扫描器）两套 grammar 编译器，纯手写无依赖，

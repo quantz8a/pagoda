@@ -186,11 +186,13 @@ prompt / 共享树干只 prefill 一次，任意多分支零重算接入。HTTP 
    → 解码部分 ✅ 已完成（零依赖 `grammar.rs` + 引擎 logit mask + server 端点 + 单测/集成测试）；
    多模态对接留待下一里程碑。
 7. **增量 KV 会话（P2，性能）**：消灭 O(n²) 全量重放——`ModelSession` trait（`context_len` / `forward(新后缀)` / `fork`）+ 引擎每序列私有会话 + checkpoint 树干 KV 分叉；pagoda-hf 侧每会话一份 Candle KV cache（首调全量预填充、之后逐 token，规避 candle 0.8 mask 广播限制）。→ ✅ 已完成并于 2026-09-30 在联网 Linux 开发机上验证：`tests/session_tests.rs` 6 项（投喂恰好一次/无状态等价/批量隔离/异常回退/checkpoint 分叉/空续写），e2e 实测 16 步生成模型仅吃 21 token（全量重放需 216，省 10.3 倍，墙钟 11ms→6ms），checkpoint 分叉零重算树干。已知边界：跨序列张量级 KV 共享（radix 命中前缀的 KV 嫁接）为 P3；candle mask 限制下续写逐 token 喂入。
-8. **GPU 后端（P3 第一步）**：→ ✅ 通路已打通（2026-09-30，RTX 3050）：`pagoda-hf --features cuda` + `PAGODA_DEVICE=cuda` + `PAGODA_DTYPE=f16`；e2e 全绿且 F32 logits 与 CPU 逐位一致。实测 GPU F16 warm 9.0s ≈ SGLang GPU 7.9s（共享盒子 launch-latency-bound，详见 docs/BENCHMARK.md）。待做：CUDA Graph、批量 matmul、张量级前缀嫁接。
+8. **GPU 后端（P3）**：→ ✅ 通路已打通（2026-09-30，RTX 3050）：`pagoda-hf --features cuda` + `PAGODA_DEVICE=cuda` + `PAGODA_DTYPE=f16`；e2e 全绿且 F32 logits 与 CPU 逐位一致。实测 GPU F16 warm 9.0s ≈ SGLang GPU 7.9s（共享盒子 launch-latency-bound，详见 docs/BENCHMARK.md）。
+9. **批量 matmul（P3）**：→ ✅ 已完成（2026-09-30 验证）：引擎解码阶段把「恰好缺一个 token」的会话聚成一批，一次 `[B,1]` 前向推进（`ModelEngine::session_forward_batch` + `ModelSession::as_any_mut` 下沉钩子；不支持的后端自动回退逐条，语义不变）。pagoda-hf 侧换用自研批量 Llama（`pagoda-hf/src/llama.rs`，约 400 行 candle-nn 原语，与 candle 官方 Llama **逐 bit 一致**：F32/F16 parity 均 0.0e0）——每会话私有 KV、补齐+遮罩拼批、按行 RoPE、原子提交（失败不留半状态，回退安全）。实测：物理调用 6.24× 收缩（256 步/41 次）；tiny 模型 batch-8 吞吐 2218 → 3103 tok/s（+40%）；1.1B 大模型墙钟暂持平（kernel 时间主导）。新指标：`total_decode_steps` / `total_decode_calls` / `decode_batch_factor`（/stats + CLI revenue 行）。测试：核心 `tests/batch_tests.rs` 3 项（调用数收敛、批量=逐条逐 token 相等、空投喂分支不挤占批次）+ e2e `e2e_batched_decode`（对拍/等价/收敛/热缓存复跑）。修复的坑：多 token 后缀喂入非空 cache 的因果遮罩必须按 `[seq, index_pos+seq]` 开窗（candle 逐 token 循环的限制随之解除）；`Tensor::stack` 会新增轴（需先挤掉每会话前导维）。待做：CUDA Graph（消除 kernel 发射开销，释放大模型批量红利）。
+10. **张量级前缀嫁接（P3，真·RadixAttention）**：→ ✅ 已完成（2026-09-30 验证）：逻辑前缀缓存（radix/APC）之外，把完赛会话的 KV **张量本体**收进跨请求仓库 `KvVault`（`pagoda-hf/src/vault.rs`：键 = token 路径，prompt 前缀 + 已喂入完整路径双键，Arc 快照零拷贝，LRU 上限默认 128 条、`PAGODA_KV_VAULT_ENTRIES` 可调，故障请求不入库）；新请求 admit 时最长前缀匹配并 `narrow` 切片嫁接（`ModelEngine::graft_session` / `offer_session_kv` + `ModelSession::as_any`，上限 prompt_len−1 保证首步照常产出 logits、自动落入批量通路）。因果注意力保证前缀切片与重算逐 bit 相等。实测（tiny 模型）：重复请求 21 → 16 token 投喂，checkpoint 创建 6 → 1 token。测试：核心 `tests/graft_tests.rs` 4 项（嫁接覆盖数、嫁接 vs 不嫁接逐 token 相等、故障 KV 不入库、APC 正交）+ e2e 断言 `model_graft_tokens`；`pagoda-hf` vault 单测 2 项（最长前缀+上限、LRU 淘汰）。稀疏键取舍：只存 prompt 边界与完整路径两处键，任意深度命中留作规模化路线。待做：radix 键控 vault（任意深度命中）、vault 容量按字节预算。
 
 ## 8. 验证（v2）
 
-- `cargo test --offline`：78 项全绿（35 库内单测 + 41 集成测试 + 2 系统测试），
+- `cargo test --offline`：85 项全绿（35 库内单测 + 48 集成测试 + 2 系统测试），
   零 rustc warning（仅预编译依赖的良性链接器提示）。
 - 系统测试（`tests/system_tests.rs`）：以真实 HTTP server（loopback 端口 + 手写 HTTP/1.1
   客户端）端到端覆盖 `/health`、`/generate`（普通 + grammar 约束）、`/v1/chat/completions`、
@@ -205,6 +207,9 @@ prompt / 共享树干只 prefill 一次，任意多分支零重算接入。HTTP 
   （录制会话断言投喂序列 `[prompt, 1, 1, …]`）、增量解码与全量重放逐 token 等价、
   批量会话互相隔离、异常会话自动回退无状态、checkpoint 分叉零重算树干、
   空续写复用树干缓存 logits。
+- 张量嫁接集成测试（`tests/graft_tests.rs`）：重复请求恰好嫁接 prompt_len−1 个
+  prompt token、嫁接与不嫁接输出逐 token 相等、故障请求 KV 绝不入库、
+  与 APC 逻辑缓存后端正交共存。
 - CLI：`pagoda sample -p "…" --repeat 2` 输出 `revenue:` 行，可见 `compute_saved` / `prefill_skip` / `avg_forward/token` / `kv_util`。
 - HTTP：`/stats` 已扩展为四轴收入指标（`compute_saved_tokens`、`prefill_skip_ratio`、`avg_forward_per_output_token`、`kv_utilization` 等）。
 - 采样器回归：temperature 路径下被 mask 的 `-inf` logit 必须获得**零概率质量**

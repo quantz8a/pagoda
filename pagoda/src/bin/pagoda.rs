@@ -121,11 +121,13 @@ fn sample(args: &[String]) -> ExitCode {
         s.prefill_chunks
     );
     println!(
-        "revenue: compute_saved={} prefill_skip={:.2} avg_forward/token={:.2} kv_util={:.2} output_tokens={}",
+        "revenue: compute_saved={} graft_saved={} prefill_skip={:.2} avg_forward/token={:.2} kv_util={:.2} decode_batch={:.2}x output_tokens={}",
         s.compute_saved_tokens(),
+        s.model_graft_tokens,
         s.prefill_skip_ratio(),
         s.avg_forward_per_output_token(),
         s.kv_utilization(),
+        s.decode_batch_factor(),
         s.total_output_tokens
     );
     ExitCode::SUCCESS

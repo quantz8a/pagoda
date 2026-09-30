@@ -15,6 +15,60 @@ pub trait ModelEngine: Send + Sync {
     fn forward(&self, context: &[u32]) -> Vec<f32>;
     fn name(&self) -> &'static str;
 
+    /// Advance many decode sessions in **one** model call.
+    ///
+    /// `feeds[i]` is the not-yet-seen token suffix of session `i` (usually
+    /// one freshly sampled token during continuous batching). On success the
+    /// return value holds one last-position logits vector per session, in the
+    /// same order. Return `None` when this backend cannot batch — the engine
+    /// then loops over [`ModelSession::forward`], which is always correct.
+    ///
+    /// Why it matters: decode is weight-bandwidth-bound, so B single-sequence
+    /// forwards cost roughly B full weight reads. One batched `[B, 1]`
+    /// forward reads the weights once per step for the whole batch.
+    ///
+    /// The sessions arrive as the boxed trait objects the engine owns (a
+    /// `&mut [&mut dyn ModelSession]` slice would force every borrow to the
+    /// trait object's `'static` bound through `&mut` invariance).
+    fn session_forward_batch(
+        &self,
+        _sessions: &mut [Box<dyn ModelSession>],
+        _feeds: &[&[u32]],
+    ) -> Option<Vec<Vec<f32>>> {
+        None
+    }
+
+    /// Try to mint a session whose KV cache already covers a prefix of
+    /// `prompt` — the tensor-level half of prefix caching (true
+    /// RadixAttention): the covered tokens are never re-fed to the model.
+    ///
+    /// `max_len` caps the covered length; the engine passes
+    /// `prompt.len() - 1` so at least one token is always fed (which is what
+    /// produces the first-step logits). The covered length is read back from
+    /// `session.context_len()`. Causality makes this exact: the KV at
+    /// position `i` depends only on tokens `0..=i`, so a cached prefix is
+    /// bit-identical to a recomputed one.
+    ///
+    /// Default `None`: no cross-request KV reuse; the engine falls back to a
+    /// fresh session (or the stateless path) and stays correct.
+    fn graft_session(&self, _prompt: &[u32], _max_len: usize) -> Option<Box<dyn ModelSession>> {
+        None
+    }
+
+    /// Offer a finished sequence's session KV for future grafts. `tokens` is
+    /// the full token path (prompt + output); `prompt_len` marks where the
+    /// prompt ended so the backend can index both the prompt prefix and the
+    /// full path as graftable. The engine calls this when a sequence
+    /// completes (never for faulted ones — their KV may be corrupt).
+    /// Default: no-op (the backend retains nothing).
+    fn offer_session_kv(
+        &self,
+        _tokens: &[u32],
+        _prompt_len: usize,
+        _session: Box<dyn ModelSession>,
+    ) {
+    }
+
     /// Hand out an incremental decode session for one sequence.
     ///
     /// Stateless backends keep the default (`None`) and the engine replays the
@@ -45,6 +99,17 @@ pub trait ModelSession: Send {
     fn context_len(&self) -> usize;
     /// Feed the not-yet-seen suffix; return last-position logits.
     fn forward(&mut self, new_tokens: &[u32]) -> Vec<f32>;
+    /// Downcast hook so a batching backend can recover its concrete session
+    /// type inside [`ModelEngine::session_forward_batch`]. Backends that
+    /// never batch keep the default (`None`).
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
+    /// Read-only downcast hook so the backend can retain a finished
+    /// session's KV ([`ModelEngine::offer_session_kv`]). Default `None`.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
     /// Cheap snapshot for agent-tree branching: the fork shares the
     /// already-computed KV state and continues independently. Backends whose
     /// cache cannot be snapshotted keep the default (`None`); the engine then
