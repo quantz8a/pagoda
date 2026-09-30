@@ -1,0 +1,28 @@
+[package]
+name = "pagoda-hf"
+version = "0.1.0"
+edition = "2021"
+description = "Real HuggingFace tokenizer and Candle weight backends for pagoda"
+license = "AGPL-3.0-only"
+
+[dependencies]
+pagoda = { path = "../pagoda" }
+
+anyhow = "1.0"
+serde_json = "1.0"
+
+# HuggingFace Hub downloads; the synchronous API lives behind `ureq`
+# (default features are the tokio client, which we don't need).
+hf-hub = { version = "0.4", default-features = false, features = ["ureq"] }
+
+# HuggingFace tokenizer (BPE / Unigram); default "http" feature pulls in
+# reqwest+tokio, but downloads here go through hf-hub, so stay slim.
+# With default features off, a regex engine must be chosen explicitly:
+# `fancy-regex` is pure Rust (no C toolchain needed, unlike `onig`).
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+
+# Candle tensor runtime + model zoo + weight loading
+candle-core = "0.8"
+candle-nn = "0.8"
+candle-transformers = "0.8"
+

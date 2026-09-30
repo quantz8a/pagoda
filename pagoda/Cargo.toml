@@ -1,0 +1,18 @@
+[package]
+name = "pagoda"
+version = "0.1.0"
+edition = "2021"
+description = "An SGLang-inspired LLM serving runtime implemented in Rust"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "pagoda"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pagoda"
+path = "src/bin/pagoda.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1

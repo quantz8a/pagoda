@@ -1,0 +1,16 @@
+Pagoda
+Copyright (C) 2026 quantz8a and contributors.
+
+Pagoda is licensed under the GNU Affero General Public License v3.0 only
+(AGPL-3.0-only). See LICENSE.
+
+This product is an independent, from-scratch Rust implementation whose
+architecture is derived from and inspired by SGLang
+(https://github.com/sgl-project/sglang), which is licensed under the
+Apache License, Version 2.0.
+
+No SGLang source code is copied into this repository. The design lineage
+and the mapping to upstream SGLang components are documented in
+../pagoda/docs/DESIGN.md. The Apache-2.0 license of SGLang permits studying and
+reimplementing its architecture; this notice is kept as attribution and
+provenance documentation.
