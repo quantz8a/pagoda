@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! System-level end-to-end test: boot the real HTTP server on a loopback port
 //! and drive it with hand-written HTTP/1.1 requests, exercising every endpoint
 //! including constrained decoding through the wire.

@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Benchmark harness: pagoda engine + real Candle weights, CPU.
 //!
 //! Prints one JSON object to stdout; methodology and comparison against

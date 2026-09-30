@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Request-level fault isolation: a model backend that returns invalid logits
 //! for a specific request must terminate only that request, never panic or
 //! corrupt the rest of the batch.

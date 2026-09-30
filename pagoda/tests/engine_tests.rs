@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! End-to-end tests of the engine, DSL, and prefix caching.
 
 use pagoda::{

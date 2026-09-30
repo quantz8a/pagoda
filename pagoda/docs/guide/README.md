@@ -16,7 +16,7 @@
 | 6 | [约束解码](06-constrained-decoding.md) | 让模型只能输出合法 JSON / 正则匹配 |
 | 7 | [调度与指标](07-scheduling-and-metrics.md) | continuous batching、chunked prefill、四轴指标 |
 | 8 | [增量 KV 会话](08-kv-session.md) | 每个 token 只算一次：O(n²) 全量重放 → O(n) 会话 + KV 分叉 |
-| 9 | [开源协议：为什么 AGPL](09-open-source-license.md) | 协议怎么防抄袭、我能怎么用它 |
+| 9 | [开源协议：为什么用 Apache-2.0](09-open-source-license.md) | 宽松开源、怎么自由使用和贡献 |
 
 ## 怎么用这份文档
 

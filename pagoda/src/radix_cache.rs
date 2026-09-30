@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Radix-tree prefix cache — the analogue of SGLang's `RadixAttention`.
 //!
 //! Every completed token sequence is inserted into a trie keyed by token id.

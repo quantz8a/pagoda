@@ -67,5 +67,5 @@ SGLang 的前端程序范式在 pagoda 里有同构实现：
 
 - pagoda **不是** SGLang 的 fork：没有复制其代码（clean-room 重写，见 NOTICE）。
 - pagoda **致敬并署名** SGLang：架构血缘永久记录在 NOTICE 与 DESIGN.md。
-- pagoda 采用 AGPL-3.0：SGLang（Apache-2.0）不能直接并入 pagoda 的代码，
-  反向则可以参考学习（见 `docs/LICENSE-CHOICE.md`）。
+- pagoda 与 SGLang 同样采用 Apache-2.0：代码可以互鉴、双向流动，血缘与
+  署名师承关系永久记录在 NOTICE。

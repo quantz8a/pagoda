@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! P1+P2 end-to-end verification: a real HuggingFace tokenizer + real Candle
 //! weights driving the full pagoda engine (prefix cache, batching, sampling),
 //! with incremental KV sessions (each token fed to the model exactly once)

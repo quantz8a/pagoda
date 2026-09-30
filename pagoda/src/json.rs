@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! A minimal JSON value, parser, and serializer. Self-contained (no `serde`)
 //! because the runtime must compile offline.
 

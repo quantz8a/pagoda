@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! KV checkpoints: pinned, shareable prefixes for agent-tree / branching
 //! workloads (create once, branch many times, never re-prefill the trunk).
 

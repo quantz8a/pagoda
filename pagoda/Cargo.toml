@@ -3,7 +3,7 @@ name = "pagoda"
 version = "0.1.0"
 edition = "2021"
 description = "An SGLang-inspired LLM serving runtime implemented in Rust"
-license = "AGPL-3.0-only"
+license = "Apache-2.0"
 
 [lib]
 name = "pagoda"

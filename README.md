@@ -41,5 +41,5 @@ cd pagoda-hf && bash scripts/verify-p1.sh --mirror   # 直连 HF 可去掉 --mir
 
 ## License
 
-[AGPL-3.0-only](LICENSE) — 商用/闭源使用需要单独授权，设计理由见
-[`pagoda/docs/LICENSE-CHOICE.md`](pagoda/docs/LICENSE-CHOICE.md)。
+[Apache-2.0](LICENSE) — 可自由使用、修改与分发，包括商用和闭源。与上游
+SGLang 同属宽松开源生态，署名与血缘由 `NOTICE` 保留。

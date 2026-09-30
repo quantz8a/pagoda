@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! An SGLang-style frontend language, expressed as an embeddable builder API.
 //!
 //! The real SGLang lets you write programs like `sgl.gen(...)`, `sgl.select(...)`

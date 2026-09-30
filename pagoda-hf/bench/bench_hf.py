@@ -1,5 +1,5 @@
 # Copyright (C) 2026  quantz8a
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Benchmark harness: HuggingFace transformers (python/torch) CPU reference,
 same scenarios as pagoda-hf/examples/bench.rs. Prints one JSON object.
 

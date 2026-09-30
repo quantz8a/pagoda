@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Tests for the incremental KV-session contract: the engine must feed each
 //! token to the model exactly once (prompt once, then one fresh token per
 //! step), keep sessions private per sequence, fork checkpoint trunks instead

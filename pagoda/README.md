@@ -3,11 +3,9 @@
 An SGLang-inspired LLM serving runtime, implemented from scratch in Rust with
 **zero external dependencies** — it builds and runs fully offline.
 
-> **License: AGPL-3.0-only.** Free to use, study, modify and redistribute —
-> but modifications offered as a network service must be published, and this
-> code cannot be absorbed into permissively-licensed projects (Apache-2.0/MIT)
-> such as upstream SGLang. See `docs/LICENSE-CHOICE.md` for the rationale.
-> Commercial licensing: contact the author (dual-license ready).
+> **License: Apache-2.0.** Free to use, study, modify, and redistribute —
+> including commercial and closed-source use. Pagoda is built in the same open
+> ecosystem as upstream SGLang, with attribution preserved in `NOTICE`.
 
 It distills the core of [SGLang](https://github.com/sgl-project/sglang) into a
 compact, testable reference implementation:
@@ -77,8 +75,8 @@ Invoke-RestMethod http://127.0.0.1:8080/checkpoint/generate -Method Post `
 - **`docs/SELLING-POINTS.md`** — what makes pagoda different (卖点).
 - **`docs/SGLANG-COMPAT.md`** — SGLang fusion guide: API/DSL/architecture
   compatibility matrix.
-- **`docs/LICENSE-CHOICE.md`** — why AGPL-3.0 (protects against upstream
-  code-copying while staying true open source).
+- **`LICENSE` / `NOTICE`** — Apache-2.0 licensing and SGLang provenance /
+  attribution.
 - **`docs/DESIGN.md`** — architecture, SGLang mapping, parity roadmap.
 - **`docs/REQUIREMENTS.md`** — requirement analysis and acceptance criteria.
 - **`docs/BENCHMARK.md`** — measured comparison vs SGLang / HF transformers

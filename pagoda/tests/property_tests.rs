@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Deterministic, dependency-free property-style tests. Each test generates a
 //! pseudorandom workload from the crate's own SplitMix64 RNG and checks a
 //! structural invariant across many iterations, in the spirit of `proptest`

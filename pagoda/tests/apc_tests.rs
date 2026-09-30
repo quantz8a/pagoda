@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Engine-level tests for the APC (block-level chained-hash) cache backend:
 //! cross-request reuse at block granularity, chain semantics on divergence,
 //! and eviction under memory pressure.

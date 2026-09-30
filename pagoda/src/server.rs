@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! A minimal, dependency-free HTTP serving frontend.
 //!
 //! Implements a tiny subset of the HTTP/1.1 protocol on top of

@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Block-level chained-hash prefix cache, in the style of vLLM's Automatic
 //! Prefix Caching (APC).
 //!

@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Paged KV cache with reference counting and copy-on-write.
 //!
 //! Real KV caches store `num_layers * 2 * head_dim` floats per token; this

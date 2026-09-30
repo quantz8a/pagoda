@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! Model backend abstraction plus a deterministic n-gram toy language model.
 
 use std::collections::HashMap;

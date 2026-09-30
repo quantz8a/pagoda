@@ -1,5 +1,5 @@
 // Copyright (C) 2026  quantz8a
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: Apache-2.0
 //! End-to-end constrained decoding: the grammar must be enforced through the
 //! sampler mask so greedy decoding emits only legal continuations.
 
