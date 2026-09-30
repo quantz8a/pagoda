@@ -1,5 +1,7 @@
 # pagoda
 
+[![CI](https://github.com/quantz8a/pagoda/actions/workflows/ci.yml/badge.svg)](https://github.com/quantz8a/pagoda/actions/workflows/ci.yml)
+
 SGLang 架构思想的 Rust 重实现：零第三方依赖的 LLM 推理服务引擎，
 外加一个可插真实 HuggingFace 权重/分词器的姊妹 crate。
 

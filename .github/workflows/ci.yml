@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pagoda:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Zero-dependency crate: fully offline after the toolchain install.
+      - name: test (offline)
+        run: cargo test --offline --manifest-path pagoda/Cargo.toml
+      - name: zero warnings
+        run: RUSTFLAGS="-D warnings" cargo check --offline --manifest-path pagoda/Cargo.toml --all-targets
+
+  pagoda-hf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pagoda-hf
+      # Networked crate: type-check everything (incl. examples); the e2e
+      # model download stays out of CI - run scripts/verify-p1.sh manually.
+      - name: check
+        run: cargo check --all-targets --manifest-path pagoda-hf/Cargo.toml
