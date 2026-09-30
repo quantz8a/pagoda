@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="m1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A78BFA"/><stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <linearGradient id="m2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8B5CF6"/><stop offset="1" stop-color="#6366F1"/>
+    </linearGradient>
+    <linearGradient id="m3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366F1"/><stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <linearGradient id="m4" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38BDF8"/><stop offset="1" stop-color="#2DD4BF"/>
+    </linearGradient>
+    <filter id="mshadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#4C1D95" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+
+  <path d="M256 100 L256 162" stroke="url(#m1)" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="256" cy="88" r="11" fill="#8B5CF6"/>
+
+  <g filter="url(#mshadow)">
+    <path d="M202 196 L256 168 L310 196 L296 212 L216 212 Z" fill="url(#m1)"/>
+    <path d="M168 248 L256 220 L344 248 L330 264 L182 264 Z" fill="url(#m2)"/>
+    <path d="M134 300 L256 272 L378 300 L364 316 L148 316 Z" fill="url(#m3)"/>
+    <path d="M100 352 L256 324 L412 352 L398 368 L114 368 Z" fill="url(#m4)"/>
+  </g>
+
+  <rect x="196" y="384" width="120" height="12" rx="6" fill="url(#m4)"/>
+</svg>
