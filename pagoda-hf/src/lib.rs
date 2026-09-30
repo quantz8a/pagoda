@@ -233,12 +233,36 @@ pub struct CandleModel<M: CandleCausalLM = LlamaCausalLM> {
 }
 
 impl CandleModel<LlamaCausalLM> {
+    /// Pick the compute device from `PAGODA_DEVICE`: `cpu` (default) or
+    /// `cuda` / `cuda:N`. CUDA requires building with `--features cuda`.
+    pub fn device_from_env() -> Result<Device> {
+        match std::env::var("PAGODA_DEVICE").as_deref() {
+            Ok("cuda") => Device::new_cuda(0).context("PAGODA_DEVICE=cuda but no CUDA device"),
+            Ok(other) if other.starts_with("cuda:") => {
+                let idx: usize = other[5..].parse().context("bad PAGODA_DEVICE index")?;
+                Device::new_cuda(idx).with_context(|| format!("no CUDA device {idx}"))
+            }
+            _ => Ok(Device::Cpu),
+        }
+    }
+
     /// Load a Llama-family `config.json` and (possibly sharded) safetensors
     /// weights on the given device.
     pub fn llama_from_safetensors(
         config_path: impl AsRef<Path>,
         weight_paths: &[std::path::PathBuf],
         device: Device,
+    ) -> Result<Self> {
+        Self::llama_from_safetensors_as(config_path, weight_paths, device, DType::F32)
+    }
+
+    /// [`CandleModel::llama_from_safetensors`] with an explicit compute dtype
+    /// (F16 halves bandwidth and unlocks tensor cores on GPU).
+    pub fn llama_from_safetensors_as(
+        config_path: impl AsRef<Path>,
+        weight_paths: &[std::path::PathBuf],
+        device: Device,
+        dtype: DType,
     ) -> Result<Self> {
         // `LlamaConfig` is the serde shape of config.json; `into_config`
         // converts it into Candle's runtime `Config` (flash-attn stays off).
@@ -248,14 +272,14 @@ impl CandleModel<LlamaCausalLM> {
         let config = hf_config.into_config(false);
         let vocab_size = config.vocab_size;
         let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(weight_paths, DType::F32, &device)?
+            VarBuilder::from_mmaped_safetensors(weight_paths, dtype, &device)?
         };
         let model = Llama::load(vb, &config).context("failed to load Llama weights")?;
         Ok(Self {
             model: Arc::new(LlamaCausalLM {
                 model,
                 config,
-                dtype: DType::F32,
+                dtype,
             }),
             device,
             vocab_size,
@@ -263,12 +287,27 @@ impl CandleModel<LlamaCausalLM> {
         })
     }
 
+    /// Compute dtype from `PAGODA_DTYPE`: `f32` (default) or `f16` / `bf16`.
+    pub fn dtype_from_env() -> Result<DType> {
+        match std::env::var("PAGODA_DTYPE").as_deref() {
+            Ok("f16") => Ok(DType::F16),
+            Ok("bf16") => Ok(DType::BF16),
+            Ok("f32") | Err(_) => Ok(DType::F32),
+            Ok(other) => anyhow::bail!("unknown PAGODA_DTYPE {other:?} (want f32/f16/bf16)"),
+        }
+    }
+
     /// Download `config.json` + `model.safetensors` from a HuggingFace repo and
     /// load them on the CPU.
     pub fn llama_from_hub(repo: &str) -> Result<Self> {
+        Self::llama_from_hub_on(repo, Device::Cpu)
+    }
+
+    /// Same as [`CandleModel::llama_from_hub`] but on an explicit device.
+    pub fn llama_from_hub_on(repo: &str, device: Device) -> Result<Self> {
         let config_path = HfTokenizer::download(repo, "config.json")?;
         let weights_path = HfTokenizer::download(repo, "model.safetensors")?;
-        Self::llama_from_safetensors(config_path, &[weights_path], Device::Cpu)
+        Self::llama_from_safetensors_as(config_path, &[weights_path], device, Self::dtype_from_env()?)
     }
 }
 

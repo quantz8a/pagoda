@@ -186,6 +186,7 @@ prompt / 共享树干只 prefill 一次，任意多分支零重算接入。HTTP 
    → 解码部分 ✅ 已完成（零依赖 `grammar.rs` + 引擎 logit mask + server 端点 + 单测/集成测试）；
    多模态对接留待下一里程碑。
 7. **增量 KV 会话（P2，性能）**：消灭 O(n²) 全量重放——`ModelSession` trait（`context_len` / `forward(新后缀)` / `fork`）+ 引擎每序列私有会话 + checkpoint 树干 KV 分叉；pagoda-hf 侧每会话一份 Candle KV cache（首调全量预填充、之后逐 token，规避 candle 0.8 mask 广播限制）。→ ✅ 已完成并于 2026-09-30 在联网 Linux 开发机上验证：`tests/session_tests.rs` 6 项（投喂恰好一次/无状态等价/批量隔离/异常回退/checkpoint 分叉/空续写），e2e 实测 16 步生成模型仅吃 21 token（全量重放需 216，省 10.3 倍，墙钟 11ms→6ms），checkpoint 分叉零重算树干。已知边界：跨序列张量级 KV 共享（radix 命中前缀的 KV 嫁接）为 P3；candle mask 限制下续写逐 token 喂入。
+8. **GPU 后端（P3 第一步）**：→ ✅ 通路已打通（2026-09-30，RTX 3050）：`pagoda-hf --features cuda` + `PAGODA_DEVICE=cuda` + `PAGODA_DTYPE=f16`；e2e 全绿且 F32 logits 与 CPU 逐位一致。实测 GPU F16 warm 9.0s ≈ SGLang GPU 7.9s（共享盒子 launch-latency-bound，详见 docs/BENCHMARK.md）。待做：CUDA Graph、批量 matmul、张量级前缀嫁接。
 
 ## 8. 验证（v2）
 

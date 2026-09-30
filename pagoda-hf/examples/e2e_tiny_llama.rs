@@ -47,8 +47,10 @@ fn main() -> Result<()> {
     let continuation = " the largest city";
     let continuation_len = tokenizer.encode(continuation).len();
 
-    println!("==> [2/4] download config + safetensors weights, load on CPU (F32)");
-    let model = CandleModel::llama_from_hub(REPO)?;
+    println!("==> [2/4] download config + safetensors weights, load on PAGODA_DEVICE (default cpu, F32)");
+    let device = CandleModel::device_from_env()?;
+    println!("    device: {device:?}");
+    let model = CandleModel::llama_from_hub_on(REPO, device)?;
     println!("    model loaded: {}", model.name());
     // Ground-truth model compute, shared before the engine takes ownership.
     let fed = model.tokens_fed_handle();

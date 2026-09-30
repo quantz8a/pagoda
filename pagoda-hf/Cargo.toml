@@ -26,3 +26,8 @@ candle-core = "0.8"
 candle-nn = "0.8"
 candle-transformers = "0.8"
 
+[features]
+# Opt-in GPU support: building with `--features cuda` requires a CUDA 12.x
+# toolkit (nvcc) on PATH / CUDA_HOME. Default builds stay CPU-only.
+cuda = ["candle-core/cuda", "candle-nn/cuda"]
+

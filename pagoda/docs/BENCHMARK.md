@@ -33,6 +33,8 @@ torch_native 后端；cold 含一次性 JIT 编译。
 | 引擎 | cold | warm | batch-8 产出 |
 | --- | ---: | ---: | ---: |
 | pagoda-hf（candle CPU F32，单线程 matmul） | 6623 ms | 6550 ms | 5.0 tok/s |
+| pagoda-hf（candle **GPU F32**，RTX 3050） | 16811 ms | 16810 ms | 2.0 tok/s |
+| pagoda-hf（candle **GPU F16**，RTX 3050） | 9100 ms | 9009 ms | 4.0 tok/s |
 | HF transformers（torch CPU F32，**1 线程**） | 7015 ms | 6948 ms | 7.7 tok/s |
 | HF transformers（torch CPU F32，6 线程） | **4270 ms** | **4243 ms** | **19.7 tok/s** |
 | SGLang 0.5.10（RTX 3050, flashinfer, bf16） | 40212 ms¹ | 7866 ms | 23.0 tok/s |
@@ -58,6 +60,13 @@ torch_native 后端；cold 含一次性 JIT 编译。
    （warm≈cold），张量级前缀嫁接在 P3。
 5. **SGLang CPU 轨道缺失**：0.5.10 的 scheduler 硬依赖 CUDA device，
    CPU-only 部署直接拒绝——pagoda 的"CPU 也能跑全链路"是真实差异点。
+6. **GPU 在共享盒子上是"启动延迟-bound"，不是算力-bound**：pagoda GPU F16
+   warm 9009ms ≈ SGLang GPU 7866ms（只差 1.14×），两者单 token 都在
+   250-280ms——因为 CPU 被抢占时，每步数百次 kernel launch 的往返延迟
+   淹没了一切（pagoda 的 GPU F16 甚至输给自家 CPU F32）。这印证了
+   CUDA Graph / 融合 kernel / 批量前向的价值，也是 P3 剩余工作的动机。
+   pagoda GPU 通路的意义在于**已打通且数值正确**（F32 下 logits 与 CPU
+   逐位一致），性能工程是下一步。
 
 ## 环境税实录（为什么"一键"值钱）
 
@@ -85,6 +94,11 @@ cd pagoda-hf && cargo build --release --example bench
 ./target/release/examples/bench --repo TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
     --prompt-tokens 128 --gen-tokens 32 --batch 8 --repeat 3
 
+# pagoda GPU（需要 CUDA 12.x nvcc；驱动需 ≥ 所用工具链版本）
+cd pagoda-hf && cargo build --release --features cuda --example bench
+PAGODA_DEVICE=cuda PAGODA_DTYPE=f16 ./target/release/examples/bench \
+    --repo TinyLlama/TinyLlama-1.1B-Chat-v1.0 --prompt-tokens 128 --gen-tokens 32
+
 # HF transformers 参考
 pip install torch transformers
 python pagoda-hf/bench/bench_hf.py --repo TinyLlama/TinyLlama-1.1B-Chat-v1.0 --threads 6
@@ -100,5 +114,5 @@ python pagoda-hf/bench/bench_sglang.py --repo TinyLlama/TinyLlama-1.1B-Chat-v1.0
 | --- | --- |
 | 批量 matmul 缺口（batch 落后 4×） | P3：batched prefill/decode |
 | 命中前缀仍重算（warm≈cold） | P3：张量级 KV 嫁接（真·RadixAttention） |
-| GPU 后端缺失 | P3：candle-cuda / 自研 kernel（需 nvcc ≥ 12 环境，已备） |
+| GPU 后端缺失 | ✅ 已打通（`--features cuda` + `PAGODA_DEVICE=cuda` + `PAGODA_DTYPE=f16`）；性能工程（CUDA Graph/融合 kernel）留待 P3 |
 | CPU 全链路可用 + 极低框架税 | 已验证的差异化优势 |

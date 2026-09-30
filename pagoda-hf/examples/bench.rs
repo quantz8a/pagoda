@@ -64,7 +64,9 @@ fn main() -> Result<()> {
     let args = parse_args();
     eprintln!("==> loading tokenizer + weights from {}", args.repo);
     let tokenizer = HfTokenizer::from_hub(&args.repo)?;
-    let model = CandleModel::llama_from_hub(&args.repo)?;
+    let device = CandleModel::device_from_env()?;
+    eprintln!("==> device: {device:?}");
+    let model = CandleModel::llama_from_hub_on(&args.repo, device.clone())?;
     let fed = model.tokens_fed_handle();
 
     // Same prompt text on both engines: a fixed sentence repeated until the
@@ -123,7 +125,9 @@ fn main() -> Result<()> {
     let total_out: usize = outs.iter().map(|o| o.output_token_ids.len()).sum();
 
     let out = serde_json::json!({
-        "engine": "pagoda-hf (candle, cpu f32)",
+        "engine": format!("pagoda-hf (candle, {} {})",
+            if device.is_cuda() { "cuda" } else { "cpu" },
+            std::env::var("PAGODA_DTYPE").unwrap_or_else(|_| "f32".to_string())),
         "repo": args.repo,
         "prompt_tokens": prompt_tokens,
         "gen_tokens": args.gen_tokens,
