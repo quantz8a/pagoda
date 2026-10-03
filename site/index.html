@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pagoda · 零依赖的 LLM 推理引擎（Rust）</title>
-<meta name="description" content="Pagoda：零依赖、可离线的 LLM 推理引擎（Rust）。radix 前缀缓存、连续批调度、分页 KV，另有 checkpoint、批量解码和 Laya 决策原语，OpenAI 兼容。">
+<title>Pagoda · LLM 的 Rust 运行时框架</title>
+<meta name="description" content="Pagoda：LLM 的 Rust 运行时框架。整合各家所长——SGLang 的调度、vLLM 的缓存、OpenAI 兼容 API、Laya 决策——零第三方依赖，可离线编译。">
 <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -51,10 +51,10 @@
             <span class="pill">可离线</span>
           </div>
           <h1 class="hero-title">
-            把大模型推理的核心，<br>用 <span class="hs">Rust</span> 重写一遍
-            <span class="big">零依赖，可离线。</span>
+            LLM 的 <span class="hs">Rust</span> 运行时框架
+            <span class="big">整合各家所长，零依赖，可离线。</span>
           </h1>
-          <p class="hero-sub">Pagoda 是一个 LLM 推理引擎：radix 前缀缓存、连续批调度、分页 KV 这些经过生产验证的机制，加上 checkpoint、批量解码和 Laya 这几个 agent 场景常用的原语，全部只用 Rust 标准库实现。cargo build --offline 就能编译，测试也能离线跑。</p>
+          <p class="hero-sub">把各家验证过的东西整合进一个零依赖的 crate：SGLang 的 radix 前缀缓存和连续批调度，vLLM 的块级 APC 缓存，OpenAI 兼容的 API 和 DSL，再加 checkpoint、批量解码和 Laya 决策这几个 agent 原语。全部只用 Rust 标准库实现，cargo build --offline 就能编译，测试也能离线跑。</p>
           <div class="hero-cta">
             <a class="btn btn-primary" href="#docs">读文档 <span class="arr">→</span></a>
             <a class="btn btn-ghost" href="#graph">看关系 <span class="arr">→</span></a>
@@ -92,8 +92,8 @@
           <div class="pillar reveal" style="--pc:#8F7FF2">
             <div class="p-k">integration · 整合</div>
             <h3>接进来就能用</h3>
-            <p>OpenAI 兼容 API、同构 DSL、共部署网关——客户端改个 base_url 就接上，已有部署不用推倒。</p>
-            <div class="p-tags"><span>OpenAI</span><span>DSL</span><span>网关</span></div>
+            <p>SGLang 的调度、vLLM 的缓存、OpenAI 的 API、Laya 的决策——各家所长进同一个 crate，客户端改个 base_url 就接上。</p>
+            <div class="p-tags"><span>SGLang</span><span>vLLM</span><span>Laya</span></div>
           </div>
           <div class="pillar reveal" style="--pc:#FF5A36">
             <div class="p-k">reliability · 可靠</div>
@@ -157,7 +157,7 @@
         <div class="section-head reveal">
           <span class="eyebrow"><span class="d"></span> Why · 它到底做了什么</span>
           <h2 class="section-title">跟别的实现，<span class="accent">差在哪</span></h2>
-          <p class="section-sub">一句话：经过生产验证的推理机制 + Rust 的标准库 + 几个 agent 场景原语。下面每条都对应代码，不是口号。</p>
+          <p class="section-sub">一句话：整合各家所长 + Rust 的标准库 + 几个 agent 场景原语。下面每条都对应代码，不是口号。</p>
         </div>
 
         <div class="grid-3">
