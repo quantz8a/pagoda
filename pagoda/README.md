@@ -1,5 +1,7 @@
 # Pagoda
 
+[![crates.io](https://img.shields.io/crates/v/pagoda.svg)](https://crates.io/crates/pagoda) [![docs.rs](https://docs.rs/pagoda/badge.svg)](https://docs.rs/pagoda)
+
 An SGLang-inspired LLM serving runtime, implemented from scratch in Rust with
 **zero external dependencies** — it builds and runs fully offline.
 
@@ -36,7 +38,7 @@ compact, testable reference implementation:
 ```powershell
 cd pagoda
 
-# one-click: build + 93 tests + demos
+# one-click: build + 96 tests + demos
 powershell -ExecutionPolicy Bypass -File scripts\quickstart.ps1   # bash: scripts/quickstart.sh
 
 # run the test suite
@@ -124,7 +126,7 @@ pagoda/
 ├── scripts/            # one-click quickstart + agent-cluster demo (ps1/sh)
 └── tests/              # engine / fault / admission / apc / checkpoint /
                         # session / batch / graft / property / grammar /
-                        # system tests (93 total)
+                        # system tests (96 total)
 ```
 
 ## Design notes

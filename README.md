@@ -1,7 +1,7 @@
 <p align="center">
   <img src="assets/logo.png" alt="pagoda" width="560" />
 </p>
-<p align="center"><a href="https://github.com/quantz8a/pagoda/actions/workflows/ci.yml"><img src="https://github.com/quantz8a/pagoda/actions/workflows/ci.yml/badge.svg" alt="CI" /></a></p>
+<p align="center"><a href="https://github.com/quantz8a/pagoda/actions/workflows/ci.yml"><img src="https://github.com/quantz8a/pagoda/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <a href="https://crates.io/crates/pagoda"><img src="https://img.shields.io/crates/v/pagoda.svg" alt="crates.io" /></a> <a href="https://docs.rs/pagoda"><img src="https://docs.rs/pagoda/badge.svg" alt="docs.rs" /></a></p>
 
 SGLang 架构思想的 Rust 重实现：零第三方依赖的 LLM 推理服务引擎，
 外加一个可插真实 HuggingFace 权重/分词器的姊妹 crate。
