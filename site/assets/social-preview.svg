@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <defs>
+    <radialGradient id="satmo" cx="0.34" cy="0.53" r="0.45">
+      <stop offset="0" stop-color="#6D28D9" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#6D28D9" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="s1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#DDD6FE"/><stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+    <linearGradient id="s2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A78BFA"/><stop offset="1" stop-color="#818CF8"/>
+    </linearGradient>
+    <linearGradient id="s3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#60A5FA"/><stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <linearGradient id="s4" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2DD4BF"/><stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <linearGradient id="stext" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#C4B5FD"/><stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <filter id="sneon" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.35"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="14" flood-color="#7C5CFF" flood-opacity="0.4"/>
+    </filter>
+    <filter id="sspire" x="-120%" y="-120%" width="340%" height="340%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="640" fill="#0C1124"/>
+  <ellipse cx="430" cy="340" rx="380" ry="250" fill="url(#satmo)"/>
+
+  <g transform="translate(180,130) scale(0.9)">
+    <path d="M256 100 L256 162" stroke="url(#s1)" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="256" cy="88" r="11" fill="#DDD6FE" filter="url(#sspire)"/>
+    <g filter="url(#sneon)">
+      <path d="M202 196 L256 168 L310 196 L296 212 L216 212 Z" fill="url(#s1)"/>
+      <path d="M168 248 L256 220 L344 248 L330 264 L182 264 Z" fill="url(#s2)"/>
+      <path d="M134 300 L256 272 L378 300 L364 316 L148 316 Z" fill="url(#s3)"/>
+      <path d="M100 352 L256 324 L412 352 L398 368 L114 368 Z" fill="url(#s4)"/>
+    </g>
+    <rect x="196" y="384" width="120" height="12" rx="6" fill="url(#s4)"/>
+  </g>
+
+  <text x="570" y="385" font-family="Segoe UI, Arial, sans-serif" font-size="84" font-weight="600" letter-spacing="12" fill="url(#stext)">PAGODA</text>
+  <text x="573" y="445" font-family="Segoe UI, Arial, sans-serif" font-size="28" letter-spacing="2" fill="#8DA2C0">A zero-dependency LLM serving engine in Rust</text>
+</svg>
