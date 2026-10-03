@@ -6,7 +6,7 @@ description = "Real HuggingFace tokenizer and Candle weight backends for pagoda"
 license = "Apache-2.0"
 
 [dependencies]
-pagoda = { path = "../pagoda" }
+pagoda = { path = "../pagoda", version = "0.1.0" }
 
 anyhow = "1.0"
 serde = { version = "1", features = ["derive"] }
