@@ -168,6 +168,24 @@
             <tr><td>CPU 单次延迟 mean</td><td>1061.9 ms</td><td class="win">470.9 ms</td><td>pagoda 慢 2.25 倍，见诚实清单</td></tr>
           </tbody>
         </table>
+
+        <div class="section-head reveal" style="margin-top:56px">
+          <span class="eyebrow"><span class="d" style="background:var(--vio);box-shadow:0 0 12px var(--vio)"></span> vs SGLang · 2026-09-30 同机实测</span>
+          <h2 class="section-title">和 SGLang 比，<span class="accent vio">赢在哪、输在哪</span></h2>
+          <p class="section-sub">pagoda-hf vs SGLang 0.5.10 vs HF transformers，同一台共享开发机（load 4–5，指示性对比）。场景：134-token prompt + 32 token 生成，贪心采样。完整数据见 <span class="mono">pagoda/docs/BENCHMARK.md</span>。</p>
+        </div>
+        <table class="mod-table bench-table reveal">
+          <thead><tr><th>场景</th><th>pagoda</th><th>SGLang 0.5.10</th><th>结论</th></tr></thead>
+          <tbody>
+            <tr><td>tiny 模型 warm 延迟</td><td class="win">14.3 ms</td><td>153.9 ms</td><td>快 10.8×——框架税差距，python 逐 token 派发</td></tr>
+            <tr><td>tiny 模型 batch-8 吞吐</td><td class="win">3103 tok/s</td><td>680 tok/s</td><td>快 4.6×（GPU 救不了框架开销）</td></tr>
+            <tr><td>CPU-only 部署</td><td class="win">全链路可跑</td><td>拒绝运行</td><td>scheduler 硬依赖 CUDA，边端/内网是真实差异点</td></tr>
+            <tr><td>干净环境搭建</td><td class="win">cargo build 一次通过</td><td>7 步修复链</td><td>CUDA 10.1 头文件污染、gcc 太老、flashinfer 不支持……实录见原文档</td></tr>
+            <tr><td>1.1B warm 单请求</td><td>8494 ms（GPU F16）</td><td>7866 ms</td><td>基本打平——共享盒子上两者都是发射延迟主导</td></tr>
+            <tr><td>1.1B batch-8 吞吐</td><td>4.0 tok/s</td><td class="win">23.0 tok/s</td><td>SGLang 快 5.8×，GPU 批量吞吐是它的主场</td></tr>
+          </tbody>
+        </table>
+        <p class="rel-cap reveal">所以两件事都成立：边缘/内网/控制面用 pagoda 直接跑；数据中心大模型吞吐交给生成引擎，pagoda 以网关共部署——这正是「整合各家所长」。</p>
         <div class="grid-3" style="margin-top:26px">
           <div class="tile reveal">
             <div class="t-k">why it wins</div>
