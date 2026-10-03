@@ -9,7 +9,10 @@ license = "Apache-2.0"
 pagoda = { path = "../pagoda" }
 
 anyhow = "1.0"
-serde_json = "1.0"
+serde = { version = "1", features = ["derive"] }
+# preserve_order keeps JSON object keys in document order: choice-question
+# criteria order is semantically meaningful (probabilities zip with keys).
+serde_json = { version = "1.0", features = ["preserve_order"] }
 
 # HuggingFace Hub downloads; the synchronous API lives behind `ureq`
 # (default features are the tokio client, which we don't need).
@@ -30,4 +33,3 @@ candle-transformers = "0.8"
 # Opt-in GPU support: building with `--features cuda` requires a CUDA 12.x
 # toolkit (nvcc) on PATH / CUDA_HOME. Default builds stay CPU-only.
 cuda = ["candle-core/cuda", "candle-nn/cuda"]
-

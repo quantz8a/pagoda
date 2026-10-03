@@ -7,6 +7,9 @@ the toy n-gram + byte stand-ins with real artifacts:
 - `HfTokenizer` — wraps `tokenizers::Tokenizer` (`tokenizer.json`).
 - `CandleModel<M>` — a `ModelEngine` adapter with a Candle Llama-family model
   loading real `config.json` + safetensors weights.
+- `Laya` — the Laya System-1 decision model (ModernBERT encoder + decision
+  head): typed answers (choice / score / noul) with calibrated probabilities
+  in one non-autoregressive forward pass. See `examples/e2e_laya.rs`.
 
 > **Status**: this crate requires network access to download its dependencies and
 > model weights. It is **not** compiled or exercised by the offline
@@ -62,3 +65,28 @@ Notes:
   runs full-context forwards without incremental KV reuse. See the crate-level
   docs for the production path forward.
 
+## Laya decision server (System 1)
+
+One-binary Rust deployment of `convaiinnovations/laya` (ModernBERT encoder +
+decision head): typed decisions (choice / score / noul) in a single
+non-autoregressive forward, Jev-compatible JSON, no Python / PyTorch needed.
+
+```powershell
+# one click: build + serve + health-check + smoke-test
+powershell -ExecutionPolicy Bypass -File scripts\serve-laya.ps1 -Smoke   # Windows
+bash scripts/serve-laya.sh --smoke                                       # Linux/macOS
+
+curl -X POST http://127.0.0.1:8081/decide -H "Content-Type: application/json" -d '{
+  "state": "Hi, we were billed twice for March. Please refund the duplicate today or we will cancel our plan.",
+  "questions": {"department": {"type": "choice", "instructions": "Which department should handle this?",
+    "criteria": {"billing": "invoices, payments, refunds", "technical": "bugs, outages", "other": "everything else"}}}
+}'
+# -> "choice": "billing", probabilities identical to the reference Python API
+```
+
+Verified bit-compatible with the official `rl_agent_api.py` responses
+(billing 0.9865 / confidence 0.9267 / churn 0.879 / act 1.0 on the README
+scenario). Same-machine benchmark vs the PyTorch reference:
+`../pagoda/docs/BENCHMARK-LAYA.md`; beginner guide:
+`../pagoda/docs/guide/14-laya-one-click-deploy.md`. End-to-end assertion suite:
+`cargo run --release --example e2e_laya`.

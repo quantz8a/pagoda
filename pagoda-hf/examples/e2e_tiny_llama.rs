@@ -48,6 +48,9 @@ fn main() -> Result<()> {
     // Computed before the engine takes ownership of the tokenizer.
     let continuation = " the largest city";
     let continuation_len = tokenizer.encode(continuation).len();
+    // [6/6] step: a prompt sharing only a sub-prefix with everything else.
+    let sub_prompt = "The capital of France";
+    let sub_prompt_len = tokenizer.encode(sub_prompt).len();
 
     println!("==> [2/5] download config + safetensors weights, load on PAGODA_DEVICE (default cpu, F32)");
     let device = CandleModel::device_from_env()?;
@@ -224,6 +227,44 @@ fn main() -> Result<()> {
         "branches of one checkpoint must be deterministic"
     );
 
+    println!("==> [6/6] sub-prefix prompt: radix vault hits at ANY depth");
+    // A prompt that shares only a partial prefix with everything seen so far
+    // ("The capital of France" without "is"): the old sparse-key vault would
+    // miss entirely (no stored key is a prefix of it); the radix-keyed vault
+    // indexes every depth and grafts prompt_len - 1 tokens.
+    let stats_before = engine.stats().model_graft_tokens;
+    let fed_before = fed.load(Ordering::Relaxed);
+    let out5 = engine.generate(&WriteRequest::new(
+        sub_prompt,
+        SamplingParams {
+            max_tokens: 16,
+            temperature: 0.0,
+            ..SamplingParams::default()
+        },
+    ));
+    let fed_sub = fed.load(Ordering::Relaxed) - fed_before;
+    let grafted_sub = engine.stats().model_graft_tokens - stats_before;
+    println!(
+        "    {:?} prefix_hit={}/{} grafted={} fed={}",
+        out5.finish_reason,
+        out5.prefix_hit_tokens,
+        out5.prompt_tokens,
+        grafted_sub,
+        fed_sub
+    );
+    assert_ne!(out5.finish_reason, FinishReason::Fault);
+    assert_ne!(out5.finish_reason, FinishReason::Rejected);
+    assert_eq!(
+        grafted_sub as usize,
+        sub_prompt_len - 1,
+        "any-depth radix vault must graft the whole sub-prefix (sparse keys would miss)"
+    );
+    assert_eq!(
+        fed_sub as usize,
+        out5.output_token_ids.len(),
+        "grafted sub-prefix: feed 1 suffix token + one per decode step"
+    );
+
     let stats = engine.stats();
     println!(
         "==> stats: saved={} skip={:.2} grafted={} faults={} rejected={} kv_util={:.2}",
@@ -237,16 +278,18 @@ fn main() -> Result<()> {
     assert_eq!(stats.faulted_requests, 0);
     assert_eq!(stats.rejected_requests, 0);
     // Warm request grafts prompt_len - 1; checkpoint creation grafts
-    // trunk_len - 1 (same prompt). Nothing else grafts.
+    // trunk_len - 1 (same prompt); the sub-prefix prompt grafts its own
+    // prompt_len - 1. Nothing else grafts.
     assert_eq!(
         stats.model_graft_tokens as usize,
-        2 * (ids.len() - 1),
-        "expected graft hits from the warm request and checkpoint creation"
+        2 * (ids.len() - 1) + (sub_prompt_len - 1),
+        "expected graft hits from the warm request, checkpoint creation, and sub-prefix prompt"
     );
 
     println!();
     println!("P1 VERIFICATION OK — real tokenizer + real weights drive pagoda end to end");
     println!("P2 VERIFICATION OK — incremental KV sessions + checkpoint fork verified");
     println!("P3 VERIFICATION OK — tensor-level prefix grafting (RadixAttention) verified");
+    println!("P3b VERIFICATION OK — radix-keyed vault grafts at any prefix depth");
     Ok(())
 }

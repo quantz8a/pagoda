@@ -2,8 +2,13 @@
 name = "pagoda"
 version = "0.1.0"
 edition = "2021"
-description = "An SGLang-inspired LLM serving runtime implemented in Rust"
+description = "Zero-dependency LLM inference runtime in pure-std Rust: radix/block prefix cache, continuous batching, KV checkpoint, single-binary offline deploy"
 license = "Apache-2.0"
+repository = "https://github.com/quantz8a/pagoda"
+homepage = "https://quantz8a.github.io/pagoda/"
+readme = "README.md"
+keywords = ["llm", "inference", "serving", "kv-cache", "offline"]
+categories = ["science::ml", "network-programming", "web-programming::http-server"]
 
 [lib]
 name = "pagoda"

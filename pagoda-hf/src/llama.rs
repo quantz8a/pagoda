@@ -72,6 +72,22 @@ impl SessionKv {
         }
         Some(SessionKv { layers, len })
     }
+
+    /// Estimated resident bytes of the cached K/V tensors (for the vault's
+    /// memory budget). Arc-shared storage is counted once per snapshot.
+    pub fn bytes(&self) -> usize {
+        self.layers
+            .iter()
+            .flatten()
+            .map(|(k, v)| (k.elem_count() + v.elem_count()) * k.dtype().size_in_bytes())
+            .sum()
+    }
+}
+
+impl crate::vault::VaultEntry for SessionKv {
+    fn bytes(&self) -> usize {
+        self.bytes()
+    }
 }
 
 /// Inverse RoPE frequencies, including Llama-3 style rope scaling (mirrors

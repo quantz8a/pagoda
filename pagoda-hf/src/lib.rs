@@ -57,6 +57,8 @@ pub mod llama;
 pub use llama::{OwnedLlama, SessionKv};
 pub mod vault;
 pub use vault::KvVault;
+pub mod laya;
+pub use laya::{Answer, Decision, Laya, QType, Question};
 
 use pagoda::model::{ModelEngine, ModelSession};
 use pagoda::tokenizer::Tokenizer as SglTokenizer;
@@ -168,7 +170,7 @@ impl SglTokenizer for HfTokenizer {
 /// trunks can fork branches over shared tensor storage.
 pub trait CandleCausalLM: Send + Sync {
     /// Per-session KV cache type.
-    type Cache: Send + Clone;
+    type Cache: Send + Clone + vault::VaultEntry;
     /// Mint a fresh, empty KV cache for one decode session.
     fn new_cache(&self, device: &Device) -> Result<Self::Cache>;
     /// Tokens already pushed through `cache`.
@@ -303,9 +305,13 @@ pub struct CandleModel<M: CandleCausalLM = LlamaCausalLM> {
     vault: Arc<Mutex<KvVault<M::Cache>>>,
 }
 
-/// Default cross-request KV vault capacity (entries, not tokens). Override
-/// with `PAGODA_KV_VAULT_ENTRIES`.
+/// Default cross-request KV vault capacity (entries). Override with
+/// `PAGODA_KV_VAULT_ENTRIES`.
 const DEFAULT_KV_VAULT_ENTRIES: usize = 128;
+
+/// Default cross-request KV vault tensor budget (bytes). Override with
+/// `PAGODA_KV_VAULT_BYTES`.
+const DEFAULT_KV_VAULT_BYTES: usize = 2 << 30; // 2 GiB
 
 fn kv_vault_entries_from_env() -> usize {
     std::env::var("PAGODA_KV_VAULT_ENTRIES")
@@ -313,6 +319,14 @@ fn kv_vault_entries_from_env() -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
         .unwrap_or(DEFAULT_KV_VAULT_ENTRIES)
+}
+
+fn kv_vault_bytes_from_env() -> usize {
+    std::env::var("PAGODA_KV_VAULT_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_KV_VAULT_BYTES)
 }
 
 impl CandleModel<LlamaCausalLM> {
@@ -364,7 +378,10 @@ impl CandleModel<LlamaCausalLM> {
             device,
             vocab_size,
             tokens_fed: Arc::new(AtomicU64::new(0)),
-            vault: Arc::new(Mutex::new(KvVault::new(kv_vault_entries_from_env()))),
+            vault: Arc::new(Mutex::new(KvVault::with_budget(
+                kv_vault_entries_from_env(),
+                kv_vault_bytes_from_env(),
+            ))),
         })
     }
 
@@ -479,7 +496,7 @@ impl<M: CandleCausalLM + 'static> ModelEngine for CandleModel<M> {
     fn offer_session_kv(
         &self,
         tokens: &[u32],
-        prompt_len: usize,
+        _prompt_len: usize,
         session: Box<dyn ModelSession>,
     ) {
         let Some(cs) = session
@@ -493,13 +510,14 @@ impl<M: CandleCausalLM + 'static> ModelEngine for CandleModel<M> {
         // cache is usually one token shorter than `tokens`. Keying by the fed
         // path guarantees a graft never overshoots the cached tensors, and it
         // makes continue-this-conversation prompts (old path + new suffix)
-        // graft the entire previous turn.
+        // graft the entire previous turn. The radix-keyed vault indexes every
+        // prefix depth, so a separate prompt-prefix key is unnecessary.
         let fed = M::cache_len(&cs.cache).min(tokens.len());
         if fed == 0 {
             return;
         }
         if let Ok(mut vault) = self.vault.lock() {
-            vault.offer(&tokens[..fed], prompt_len.min(fed), cs.cache.clone());
+            vault.offer(&tokens[..fed], cs.cache.clone());
         }
     }
 }
