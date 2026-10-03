@@ -190,7 +190,7 @@ prompt / 共享树干只 prefill 一次，任意多分支零重算接入。HTTP 
 9. **批量 matmul（P3）**：→ ✅ 已完成（2026-09-30 验证）：引擎解码阶段把「恰好缺一个 token」的会话聚成一批，一次 `[B,1]` 前向推进（`ModelEngine::session_forward_batch` + `ModelSession::as_any_mut` 下沉钩子；不支持的后端自动回退逐条，语义不变）。pagoda-hf 侧换用自研批量 Llama（`pagoda-hf/src/llama.rs`，约 400 行 candle-nn 原语，与 candle 官方 Llama **逐 bit 一致**：F32/F16 parity 均 0.0e0）——每会话私有 KV、补齐+遮罩拼批、按行 RoPE、原子提交（失败不留半状态，回退安全）。实测：物理调用 6.24× 收缩（256 步/41 次）；tiny 模型 batch-8 吞吐 2218 → 3103 tok/s（+40%）；1.1B 大模型墙钟暂持平（kernel 时间主导）。新指标：`total_decode_steps` / `total_decode_calls` / `decode_batch_factor`（/stats + CLI revenue 行）。测试：核心 `tests/batch_tests.rs` 3 项（调用数收敛、批量=逐条逐 token 相等、空投喂分支不挤占批次）+ e2e `e2e_batched_decode`（对拍/等价/收敛/热缓存复跑）。修复的坑：多 token 后缀喂入非空 cache 的因果遮罩必须按 `[seq, index_pos+seq]` 开窗（candle 逐 token 循环的限制随之解除）；`Tensor::stack` 会新增轴（需先挤掉每会话前导维）。CUDA Graph 已调研（2026-10-02）：candle-core 0.8.4 无 stream capture / 图回放 API，本路线内不可实现；解锁路径：上游 candle 支持 CUDA Graph，或以 cudarc 自研 paged-attention 融合 kernel（等效目标：把整步压成极少次 kernel 发射）。
 10. **张量级前缀嫁接（P3，真·RadixAttention）**：→ ✅ 已完成（2026-09-30 验证）：逻辑前缀缓存（radix/APC）之外，把完赛会话的 KV **张量本体**收进跨请求仓库 `KvVault`（`pagoda-hf/src/vault.rs`：键 = token 路径，prompt 前缀 + 已喂入完整路径双键，Arc 快照零拷贝，LRU 上限默认 128 条、`PAGODA_KV_VAULT_ENTRIES` 可调，故障请求不入库）；新请求 admit 时最长前缀匹配并 `narrow` 切片嫁接（`ModelEngine::graft_session` / `offer_session_kv` + `ModelSession::as_any`，上限 prompt_len−1 保证首步照常产出 logits、自动落入批量通路）。因果注意力保证前缀切片与重算逐 bit 相等。实测（tiny 模型）：重复请求 21 → 16 token 投喂，checkpoint 创建 6 → 1 token。测试：核心 `tests/graft_tests.rs` 4 项（嫁接覆盖数、嫁接 vs 不嫁接逐 token 相等、故障 KV 不入库、APC 正交）+ e2e 断言 `model_graft_tokens`；`pagoda-hf` vault 单测 2 项（最长前缀+上限、LRU 淘汰）。稀疏键取舍：只存 prompt 边界与完整路径两处键，任意深度命中留作规模化路线。→ 2026-10-02 已升级：radix 键控 trie（任意深度命中，插入/命中/淘汰 O(路径长)，同路径重复入库替换旧快照不泄漏预算）+ 双封顶（条数 PAGODA_KV_VAULT_ENTRIES 默认 128 + 字节 PAGODA_KV_VAULT_BYTES 默认 2GiB，按 SessionKv 张量实测字节 LRU 淘汰）；e2e 新增 [6/6] 子前缀命中断言（grafted=4，稀疏键时代为 0）；vault 单测 5 项（任意深度/LRU/字节预算/重复入库/淘汰剪枝保共享前缀）。
 
-11. **SGLang 共部署网关（P4）**：→ ✅ 已完成（2026-10-02）：`pagoda serve --upstream http://host:port` 进入代理模式——`/generate` 与 `/v1/chat/completions` 逐字节透传给上游 SGLang worker（零依赖阻塞式 HTTP/1.1 客户端 `http_client.rs`，整段缓冲，上游故障降级 502），控制面（`/health` `/stats` `/checkpoint*`）保持本地；`/stats` 增加 `upstream` 与 `proxied_requests` 可观测字段。一键脚本 `scripts/co-deploy.ps1` / `co-deploy.sh`（构建 → 可选 venv 装 SGLang → 起 worker 等健康 → 起网关等健康）。系统测试 `http_proxy_forwards_generation_and_keeps_control_plane`（mock 上游断言透传逐字节、控制面零转发、计数正确）。待做：SSE 流式透传（chunked 转发）、多上游前缀感知路由。
+11. **SGLang 共部署网关（P4）**：→ ✅ 已完成（2026-10-02）：`pagoda serve --upstream http://host:port` 进入代理模式——`/generate` 与 `/v1/chat/completions` 逐字节透传给上游 SGLang worker（零依赖阻塞式 HTTP/1.1 客户端 `http_client.rs`，整段缓冲，上游故障降级 502），控制面（`/health` `/stats` `/checkpoint*`）保持本地；`/stats` 增加 `upstream` 与 `proxied_requests` 可观测字段。一键脚本 `scripts/co-deploy.ps1` / `co-deploy.sh`（构建 → 可选 venv 装 SGLang → 起 worker 等健康 → 起网关等健康）。系统测试 `http_proxy_forwards_generation_and_keeps_control_plane`（mock 上游断言透传逐字节、控制面零转发、计数正确）。2026-10-03 续：SSE 流式透传 ✅——`http_client::request_open`/`UpstreamStream` 支持 chunked 分帧（缓冲路径透明解 chunked），请求体带 `"stream":true` 时代理逐 chunk 中继上游 SSE（`Proxy::forward_streaming`，Content-Type 透传 text/event-stream），上游非流式自动回退缓冲，流式期间不持引擎锁（控制面不被长连接阻塞）；`/stats` 增加 `streamed_requests`。系统测试 `http_proxy_streams_sse_verbatim_and_counts`（mock SSE 上游断言分帧原样、顺序、终止帧、缓冲路径解帧、计数）。待做：多上游前缀感知路由。
 
 12. **Laya 决策模型支持（P4，System 1）**：→ ✅ 已完成（2026-10-02 验证）：`pagoda-hf/src/laya.rs` 完整移植 Laya 推理管线（`rl_agent_api.py` + `rl_common.py` 的 candle 版）——ModernBERT 编码器（candle-transformers 现成，权重名 `encoder.*` → `model.*` 重映射加载）+ 决策头（2 层 norm_first transformer + type_emb + scorer + act_head 手搓，`nn.TransformerEncoderLayer` 语义逐行对齐：in_proj 分体、key_padding_mask、relu FFN）+ `build_sequence` 逐 token 级移植（[CLS] 题型+指令 [SEP] [MASK] 选项… [SEP] state [SEP]）+ 按题型分桶温度校准。三题型 choice/score/noul 的 Jev 兼容答案（choice 标签+分布、score 期望值、noul 概率、confidence=1−归一化熵、act_probability）。e2e `examples/e2e_laya.rs`：README 账单场景断言 department=billing（confidence 0.927）、churn_risk=0.879>0.5、概率和为 1、两次运行逐 bit 一致。架构意义：System 1 分诊台嵌入 pagoda 网关（路由/护栏/审核），与 System 2 生成（SGLang/本地）分层。2026-10-03 续：`src/bin/laya_server.rs` 独立 HTTP 服务（GET /health + POST /decide，Jev 兼容 JSON，坏请求 400），输出与官方 Python API 逐字段对拍一致（billing 0.9865 / conf 0.9267 / churn 0.879 / act 1.0 全同）；一键脚本 `pagoda-hf/scripts/serve-laya.{ps1,sh}`；同机基准 `docs/BENCHMARK-LAYA.md`（GPU 快 12.3%、冷启动 5–6.5×、内存 −37%、17.9MB 单二进制 vs 5.3GB venv、跨设备决策逐位一致；CPU 纯算力落后 oneDNN 2.25× 为诚实差距）。2026-10-03 续：网关按 Laya 判定路由 ✅（见第 13 项之后的分诊网关条目）。待做：multilingual 子目录检查点、批量决策。
 
@@ -207,12 +207,11 @@ prompt / 共享树干只 prefill 一次，任意多分支零重算接入。HTTP 
     （churn 0.9425 / needs_human 0.6177，学生 0 GPU），安全工单照常生成，kill Laya 后
     请求仍转发。测试：`triage.rs` 5 单测 + 系统测试
     `http_triage_gateway_routes_and_escalates`（mock Laya 按 state 判定 + mock 上游断言
-    威胁拦截/安全透传/计数正确）。小白文档：guide/16。待做：SSE 流式与分诊并存、
-    按部门路由到不同上游（billing→专精学生）、批量分诊。
+    威胁拦截/安全透传/计数正确）。小白文档：guide/16。SSE 与分诊并存 ✅（分诊先行缓冲判定，放行后才进入流式中继；升级响应始终是缓冲 JSON）。2026-10-03 续：按部门路由 ✅——`pagoda serve --route dept=http://host:port`（可重复），Laya 判定的部门直接选择上游（`Proxy::with_routes`/`pick`），未配置部门的落到默认 `--upstream`；`/stats` 增加 `routed_requests` 与 `routes` 路由表；缓冲与 SSE 流式两条转发路径都按部门选路。系统测试 `http_triage_routes_by_department_to_dedicated_upstream`（双 mock 上游断言 billing 工单进专线上游、未匹配部门走默认、计数正确）。待做：批量分诊、路由维度扩展到置信度/负载。
 
 ## 8. 验证（v2）
 
-- `cargo test --offline`：93 项全绿（41 库内单测 + 48 集成测试 + 4 系统测试），
+- `cargo test --offline`：96 项全绿（42 库内单测 + 48 集成测试 + 6 系统测试），
   零 rustc warning（仅预编译依赖的良性链接器提示）。
 - 系统测试（`tests/system_tests.rs`）：以真实 HTTP server（loopback 端口 + 手写 HTTP/1.1
   客户端）端到端覆盖 `/health`、`/generate`（普通 + grammar 约束）、`/v1/chat/completions`、
@@ -244,3 +243,18 @@ prompt / 共享树干只 prefill 一次，任意多分支零重算接入。HTTP 
 2. **调度策略（EXTREME CO-DESIGN / AI Factory）**：`EngineConfig.schedule_policy` 支持 `Fcfs` / `LongestPrefix` / `ShortestPrompt`，等待队列按策略出队，默认 `Fcfs` 保持向后兼容。
 3. **KV LRU 淘汰（USEFUL LIFE）**：`RadixCache` 节点记录 `last_used` 访问时钟，`evict_lru()` 淘汰最久未用的叶子前缀并释放缓存持有的块；`EngineConfig.evict_on_pressure` 在 KV 池耗尽时自动触发，替代直接失败。
 4. **约束解码（CONSTRAINED DECODING）**：`SamplingParams.grammar` 挂入 `Grammar`（byte-regex / JSON），采样前用 `allowed_bytes` + `mask_logits` 屏蔽非法 token；sampler 对 `-∞` 感知，constraint 下 greedy/采样均保证续写合法。
+
+## 10. Laya 专科化微调管线（distill/train_laya.py）
+
+- **训练/推理布局不变量**：训练端逐 token 复刻 Rust 端 `build_sequence`
+  （[CLS]+题型头+[SEP]+[MASK]选项+[SEP]+state+[SEP]，选项标记位即打分行），
+  保证"训练考的卷子"与"上线考的卷子"完全一致。
+- **轻量微调**：LoRA(r=16) 只挂编码器 Wqkv/Wo/Wi（7.2M，1.8%）+ 决策头全量
+  （26.2M）+ act_head 冻结；梯度检查点 + expandable_segments 使 8GB 共享卡可行。
+- **温度重标定**：留出集上按 (题型, 选项数桶) 网格搜索 NLL 最优温度，写回
+  `rl_agent_config.json` 的 `temperature_by_options`——置信度成为可用阈值。
+- **即训即上线**：导出键布局与官方检查点逐字节兼容（合并 LoRA 后存 f16
+  safetensors），`laya_server --model-dir` 直接加载，服务端零 Python。
+- 实测（40 篇 T2DM 摘要，含 12 篇边界案例）：纳入判定 67.5%→97.5%、
+  边界 50%→100%、设计分类 85%→100%；训练 27 分钟（RTX 3050 共享卡）。
+  小白文档见 `docs/guide/17-laya-finetune-screening.md`。

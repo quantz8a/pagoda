@@ -1,0 +1,45 @@
+{
+  "laya_perf": {
+    "latency": [
+      606,
+      691
+    ],
+    "cold_start": [
+      1.5,
+      8.65
+    ],
+    "memory": [
+      1.81,
+      2.89
+    ],
+    "size": [
+      0.0179,
+      5.3
+    ]
+  },
+  "screening": {
+    "n": 40,
+    "n_borderline": 12,
+    "base": {
+      "noul": 0.675,
+      "borderline": 0.5,
+      "design": 0.85
+    },
+    "tuned": {
+      "noul": 0.975,
+      "borderline": 1,
+      "design": 1
+    },
+    "ece": [
+      0.126,
+      0.117
+    ]
+  },
+  "funnel": {
+    "total": 40,
+    "included": 19,
+    "per_item_ms": 2076,
+    "seconds": 157.1,
+    "train_minutes": 27
+  }
+}

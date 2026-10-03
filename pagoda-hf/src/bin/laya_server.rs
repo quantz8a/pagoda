@@ -32,6 +32,7 @@ struct Args {
     addr: String,
     port: u16,
     repo: String,
+    model_dir: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -39,6 +40,7 @@ fn parse_args() -> Args {
         addr: "127.0.0.1".to_string(),
         port: 8081,
         repo: "convaiinnovations/laya".to_string(),
+        model_dir: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -47,6 +49,7 @@ fn parse_args() -> Args {
             "--addr" => args.addr = value,
             "--port" => args.port = value.parse().expect("--port"),
             "--repo" => args.repo = value,
+            "--model-dir" => args.model_dir = Some(value),
             other => eprintln!("ignoring unknown flag {other}"),
         }
     }
@@ -175,8 +178,21 @@ fn decide(laya: &Laya, body: &str) -> HttpResponse {
 fn main() -> Result<()> {
     let args = parse_args();
     let device = pagoda_hf::CandleModel::device_from_env()?;
-    eprintln!("==> loading Laya from {} on {device:?}", args.repo);
-    let laya = Arc::new(Laya::from_hub(&args.repo, device)?);
+    let laya = if let Some(dir) = &args.model_dir {
+        let dir = std::path::Path::new(dir);
+        eprintln!("==> loading Laya from local dir {} on {device:?}", dir.display());
+        Laya::from_files(
+            &dir.join("tokenizer/tokenizer.json"),
+            &dir.join("encoder/config.json"),
+            &dir.join("model.safetensors"),
+            &dir.join("rl_agent_config.json"),
+            device,
+        )?
+    } else {
+        eprintln!("==> loading Laya from {} on {device:?}", args.repo);
+        Laya::from_hub(&args.repo, device)?
+    };
+    let laya = Arc::new(laya);
     let listener = TcpListener::bind(format!("{}:{}", args.addr, args.port))?;
     eprintln!(
         "laya_server listening on http://{}:{} (POST /decide)",
