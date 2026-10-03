@@ -292,3 +292,8 @@ img,svg{display:block;max-width:100%}
   .search-btn span.t{display:none}
 }
 .tile.cap{cursor:pointer}
+
+/* benchmark table */
+.bench-table td{font-family:var(--mono);font-size:13.5px}
+.bench-table td:first-child{font-family:inherit;font-size:14px}
+.bench-table td.win{color:var(--jad);font-weight:600}

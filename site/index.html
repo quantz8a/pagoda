@@ -148,7 +148,51 @@
         </div>
       </div>
     </div>
-  </section>
+
+    <div class="section">
+      <div class="wrap">
+        <div class="section-head reveal">
+          <span class="eyebrow"><span class="d" style="background:var(--sky);box-shadow:0 0 12px var(--sky)"></span> 实测对比 · 2026-10-03</span>
+          <h2 class="section-title">同一个模型，同一台机器，<span class="accent">数字说话</span></h2>
+          <p class="section-sub">pagoda-rust 对比 Laya 官方 Python 参考实现（逐字未改）：同一模型快照、同一输入、同 5 次预热 + 50 次迭代，进程内计时排除 HTTP。i5-12500 / RTX 3050 8GB 共享开发机，指示性对比。完整方法学见 <span class="mono">pagoda/docs/BENCHMARK-LAYA.md</span>。</p>
+        </div>
+        <table class="mod-table bench-table reveal">
+          <thead><tr><th>指标</th><th>pagoda-rust</th><th>laya-python（官方）</th><th>对比</th></tr></thead>
+          <tbody>
+            <tr><td>GPU 单次延迟 mean</td><td class="win">605.9 ms</td><td>690.9 ms</td><td>快 12.3%（f32 打 fp16）</td></tr>
+            <tr><td>GPU p95 → max</td><td class="win">607.2 → 614.0 ms</td><td>693.1 → 700.3 ms</td><td>尾延迟更紧：max−min 仅 10.3 ms</td></tr>
+            <tr><td>冷启动加载</td><td class="win">1.4–1.6 s</td><td>7.9–9.4 s</td><td>快 5–6.5 倍，秒级上线</td></tr>
+            <tr><td>峰值内存（GPU）</td><td class="win">1850 MB</td><td>2954 MB</td><td>低 37%，8GB 卡可同卡多实例</td></tr>
+            <tr><td>跨设备输出一致性</td><td class="win">argmax 逐位一致（概率差 ~52 ULP）</td><td>CPU→GPU 漂移 1e-4（强制 fp16）</td><td>差 4 个数量级</td></tr>
+            <tr><td>交付形态</td><td class="win">单二进制 17.9 MB · ldd 8 行</td><td>venv 5.3 GB · 39 个包</td><td>拷贝即部署</td></tr>
+            <tr><td>CPU 单次延迟 mean</td><td>1061.9 ms</td><td class="win">470.9 ms</td><td>pagoda 慢 2.25 倍，见诚实清单</td></tr>
+          </tbody>
+        </table>
+        <div class="grid-3" style="margin-top:26px">
+          <div class="tile reveal">
+            <div class="t-k">why it wins</div>
+            <h3>精度吃亏，还是更快</h3>
+            <p>GPU 侧 pagoda 跑全 f32，官方 Python 自动 fp16（带宽和算量减半）。小模型 + 单请求场景下，Python 的逐层派发和 autocast 上下文切换吃掉了 fp16 的理论红利。</p>
+          </div>
+          <div class="tile reveal">
+            <div class="t-k">determinism</div>
+            <h3>逐位确定，进 CI</h3>
+            <p>e2e 断言两次 decide 的概率 to_bits() 完全相等，每次提交都拦非确定性改动。风控、路由这类阈值敏感场景，跨硬件可复现是硬保障。</p>
+          </div>
+          <div class="tile reveal">
+            <div class="t-k">诚实清单</div>
+            <h3>差距也摆在这</h3>
+            <p>CPU 延迟慢 2.25 倍——torch 的 oneDNN/MKL 在 CPU 上仍是业界最强，路线图是 BLAS / int8 内核；批量决策暂缺（当前逐请求）；只做推理、不带训练侧，刻意取舍。</p>
+          </div>
+        </div>
+        <div class="codeblock reveal" style="margin-top:26px"><div class="codehead"><span>复现</span><button class="copy-btn" data-code="cd pagoda-hf && cargo run --release --features cuda --example bench_laya -- --iters 50">复制</button></div><pre><code># Rust：cargo run 即得（模型已缓存时秒开）
+cd pagoda-hf && cargo run --release --features cuda --example bench_laya -- --iters 50
+PAGODA_DEVICE=cpu cargo run --release --example bench_laya -- --iters 50
+
+# Python 参考实现（torch&gt;=2.1.1 + transformers&gt;=4.48 + safetensors）
+cd pagoda-hf/bench && python bench_laya.py --snapshot &lt;laya快照目录&gt; --device cuda --iters 50</code></pre></div>
+      </div>
+    </div>  </section>
 
   <!-- ============ 为什么 ============ -->
   <section class="page" id="page-why">

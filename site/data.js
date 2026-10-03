@@ -166,6 +166,20 @@ window.DOC_INDEX = [
     body:"看显存有没有被用好，顺手指导要不要扩容、何时触 LRU。",
     keywords:["kv_utilization","指标","显存","利用率","metrics"] },
 
+  { id:"bench-laya", bucket:"metrics", title:"实测对比：pagoda-rust vs Laya Python", en:"Benchmark, same machine", minutes:"4 min",
+    blurb:"同机同模型同输入：GPU 延迟快 12.3%，冷启动快 5–6.5 倍，内存低 37%；CPU 慢 2.25 倍也直说。",
+    body:"pagoda-rust 对比 Laya 官方 Python 参考实现（逐字未改），进程内计时，5 次预热 + 50 次迭代。测于 2026-10-03，i5-12500 / RTX 3050 8GB 共享开发机，指示性对比。完整方法学见 pagoda/docs/BENCHMARK-LAYA.md。",
+    points:[
+      "GPU 单次延迟 mean 605.9 vs 690.9 ms，快 12.3%——pagoda 跑全 f32，官方自动 fp16",
+      "冷启动 1.4–1.6 s vs 7.9–9.4 s：没有 import torch，safetensors 直接 mmap",
+      "峰值内存（GPU）1850 vs 2954 MB，低 37%，8GB 卡可同卡多实例",
+      "跨设备 argmax 逐位一致（概率差 ~52 ULP）；官方 CPU→GPU 漂移 1e-4，差 4 个数量级",
+      "交付：单二进制 17.9 MB、ldd 8 行，对比 venv 5.3 GB / 39 个包",
+      "诚实清单：CPU 慢 2.25 倍（oneDNN/MKL 仍最强）；批量决策暂缺；只做推理不带训练",
+    ],
+    cmd:"cd pagoda-hf && cargo run --release --features cuda --example bench_laya -- --iters 50",
+    note:"逐位确定性有 e2e 断言锁死（to_bits 相等），每次提交都会拦住非确定性改动。",
+    keywords:["benchmark","基准","性能","对比","laya","延迟","冷启动","内存","确定性","吞吐"] },
   // ============ SGLang / sglang-rust 关联 ============
   { id:"rel-sglang-py", bucket:"sglang", title:"SGLang（上游 · Python）", en:"The origin", minutes:"",
     blurb:"思路来源：radix、连续批调度、分页 KV 都从这来。",

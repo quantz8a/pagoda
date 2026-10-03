@@ -149,6 +149,7 @@
   }
 
   function bindCopy(btn) {
+    if (btn.dataset.bound) return; btn.dataset.bound = "1";
     btn.addEventListener("click", function (ev) {
       ev.stopPropagation();
       var txt = btn.dataset.code || "";
@@ -267,6 +268,7 @@
     applyRoute();
     initReveal();
     initGlow();
+    $$(".copy-btn").forEach(bindCopy);
     window.addEventListener("hashchange", applyRoute);
     document.addEventListener("keydown", onKey);
   });
