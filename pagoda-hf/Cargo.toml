@@ -3,10 +3,14 @@ name = "pagoda-hf"
 version = "0.1.0"
 edition = "2021"
 description = "Real HuggingFace tokenizer and Candle weight backends for pagoda"
+repository = "https://github.com/quantz8a/pagoda"
+homepage = "https://quantz8a.github.io/pagoda/"
+keywords = ["llm", "inference", "huggingface", "candle", "tokenizer"]
+categories = ["science::ml"]
 license = "Apache-2.0"
 
 [dependencies]
-pagoda = { path = "../pagoda" }
+pagoda = { path = "../pagoda", version = "0.1.0" }
 
 anyhow = "1.0"
 serde = { version = "1", features = ["derive"] }
