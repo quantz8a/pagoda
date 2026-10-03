@@ -8,7 +8,7 @@ repository = "https://github.com/quantz8a/pagoda"
 homepage = "https://quantz8a.github.io/pagoda/"
 readme = "README.md"
 keywords = ["llm", "inference", "serving", "kv-cache", "offline"]
-categories = ["science::ml", "network-programming", "web-programming::http-server"]
+categories = ["science", "network-programming", "web-programming::http-server"]
 
 [lib]
 name = "pagoda"
