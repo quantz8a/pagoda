@@ -185,6 +185,20 @@
             <p>CPU 延迟慢 2.25 倍——torch 的 oneDNN/MKL 在 CPU 上仍是业界最强，路线图是 BLAS / int8 内核；批量决策暂缺（当前逐请求）；只做推理、不带训练侧，刻意取舍。</p>
           </div>
         </div>
+        <div class="section-head reveal" style="margin-top:56px">
+          <span class="eyebrow"><span class="d" style="background:var(--jad);box-shadow:0 0 12px var(--jad)"></span> 机制 A/B · 同一个引擎里开 vs 关</span>
+          <h2 class="section-title">每个机制，<span class="accent jade">自己证明自己</span></h2>
+          <p class="section-sub">不拿别家引擎说事：同一个 pagoda，机制关掉 vs 打开。数字来自 e2e 测试断言与 <span class="mono">pagoda/docs/SELLING-POINTS.md</span>。</p>
+        </div>
+        <table class="mod-table bench-table reveal">
+          <thead><tr><th>机制</th><th>关掉</th><th>打开</th><th>实测效果</th></tr></thead>
+          <tbody>
+            <tr><td>增量 KV 会话</td><td>每步全量重放（16 步 = 216 token）</td><td>每步只喂新 token（21 token）</td><td class="win">模型计算省 10.3×</td></tr>
+            <tr><td>批量解码</td><td>每会话各一次前向</td><td>[B,1] 整批一次前向</td><td class="win">物理调用收缩 6.24× · 吞吐 +40%</td></tr>
+            <tr><td>张量级前缀嫁接</td><td>重复请求重算 prefill</td><td>KV 本体切片嫁接</td><td class="win">134-token prompt 的 warm prefill 归零</td></tr>
+            <tr><td>KV checkpoint</td><td>分支重新 prefill 树干</td><td>树干钉住，分支复印接入</td><td class="win">100% 前缀命中 · 创建 6→1 token</td></tr>
+          </tbody>
+        </table>
         <div class="codeblock reveal" style="margin-top:26px"><div class="codehead"><span>复现</span><button class="copy-btn" data-code="cd pagoda-hf && cargo run --release --features cuda --example bench_laya -- --iters 50">复制</button></div><pre><code># Rust：cargo run 即得（模型已缓存时秒开）
 cd pagoda-hf && cargo run --release --features cuda --example bench_laya -- --iters 50
 PAGODA_DEVICE=cpu cargo run --release --example bench_laya -- --iters 50
