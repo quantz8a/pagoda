@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pagoda · 零依赖的 LLM 推理引擎（Rust）</title>
-<meta name="description" content="用 Rust 重写 SGLang 的关键机制：radix 前缀缓存、连续批调度、分页 KV，另加 checkpoint、批量解码和 Laya。零第三方依赖，可离线编译。">
+<meta name="description" content="Pagoda：零依赖、可离线的 LLM 推理引擎（Rust）。radix 前缀缓存、连续批调度、分页 KV，另有 checkpoint、批量解码和 Laya 决策原语，OpenAI 兼容。">
 <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,7 +22,7 @@
     <nav class="nav" aria-label="主导航">
       <a class="nav-link" data-route="home" href="#home">首页</a>
       <a class="nav-link" data-route="why" href="#why">为什么</a>
-      <a class="nav-link" data-route="sglang" href="#sglang">SGLang·Rust</a>
+      <a class="nav-link" data-route="sglang" href="#sglang">整合</a>
       <a class="nav-link" data-route="laya" href="#laya">Laya</a>
       <a class="nav-link" data-route="arch" href="#arch">架构</a>
       <a class="nav-link" data-route="graph" href="#graph">关系</a>
@@ -47,14 +47,14 @@
           <div class="hero-kicker">
             <span class="pill"><b>Rust</b></span>
             <span class="pill">零第三方依赖</span>
-            <span class="pill">SGLang 范式</span>
+            <span class="pill">整合 · 可靠 · 高性能</span>
             <span class="pill">可离线</span>
           </div>
           <h1 class="hero-title">
-            把 SGLang 的核心，<br>用 <span class="hs">Rust</span> 重写一遍
+            把大模型推理的核心，<br>用 <span class="hs">Rust</span> 重写一遍
             <span class="big">零依赖，可离线。</span>
           </h1>
-          <p class="hero-sub">Pagoda 是一个 LLM 推理引擎。它把 SGLang 里真正有用的东西搬了过来：radix 前缀缓存、连续批调度、分页 KV，另加了 checkpoint、批量解码和 Laya 这几个 agent 场景常用的原语。整个 crate 只用 Rust 标准库，cargo build --offline 就能编译，测试也能离线跑。</p>
+          <p class="hero-sub">Pagoda 是一个 LLM 推理引擎：radix 前缀缓存、连续批调度、分页 KV 这些经过生产验证的机制，加上 checkpoint、批量解码和 Laya 这几个 agent 场景常用的原语，全部只用 Rust 标准库实现。cargo build --offline 就能编译，测试也能离线跑。</p>
           <div class="hero-cta">
             <a class="btn btn-primary" href="#docs">读文档 <span class="arr">→</span></a>
             <a class="btn btn-ghost" href="#graph">看关系 <span class="arr">→</span></a>
@@ -84,28 +84,28 @@
     <div class="section tight">
       <div class="wrap">
         <div class="section-head reveal">
-          <span class="eyebrow"><span class="d"></span> 三个东西，怎么接在一起</span>
-          <h2 class="section-title">Pagoda 站在 <span class="accent">SGLang</span> 和 <span class="accent jade">Laya</span> 中间</h2>
-          <p class="section-sub">SGLang 出架构思路，Laya 出判断能力，Pagoda 把它们改成能在内网离线跑的东西。</p>
+          <span class="eyebrow"><span class="d"></span> 三件事，做好</span>
+          <h2 class="section-title"><span class="accent">整合</span> · <span class="accent jade">可靠</span> · 高性能</h2>
+          <p class="section-sub">OpenAI 兼容的接口接进来，零依赖的引擎跑起来，经过验证的调度机制扛住吞吐。</p>
         </div>
         <div class="triad">
           <div class="pillar reveal" style="--pc:#8F7FF2">
-            <div class="p-k">upstream · 思路来源</div>
-            <h3>SGLang</h3>
-            <p>Python 写的推理引擎，radix 前缀缓存和连续批调度就是从它来的。Pagoda 照着这套思路重写，署名保留在 NOTICE。</p>
-            <div class="p-tags"><span>Python</span><span>radix</span><span>GPU</span></div>
+            <div class="p-k">integration · 整合</div>
+            <h3>接进来就能用</h3>
+            <p>OpenAI 兼容 API、同构 DSL、共部署网关——客户端改个 base_url 就接上，已有部署不用推倒。</p>
+            <div class="p-tags"><span>OpenAI</span><span>DSL</span><span>网关</span></div>
           </div>
           <div class="pillar reveal" style="--pc:#FF5A36">
-            <div class="p-k">this repo · Rust 实现</div>
-            <h3>Pagoda</h3>
-            <p>只用 Rust 标准库。把上面的思路重写，额外加了 checkpoint、张量嫁接、批量解码和收入指标。</p>
-            <div class="p-tags"><span>Rust · std</span><span>离线</span><span>agent 原语</span></div>
+            <div class="p-k">reliability · 可靠</div>
+            <h3>离线也能跑</h3>
+            <p>只用 Rust 标准库，cargo test --offline 87 项全绿；checkpoint 可恢复，上游挂了网关回 502 不崩。</p>
+            <div class="p-tags"><span>Rust · std</span><span>离线</span><span>87 tests</span></div>
           </div>
           <div class="pillar reveal" style="--pc:#E8BC5C">
-            <div class="p-k">system-1 · 决策模型</div>
-            <h3>Laya</h3>
-            <p>决策模型：一次前向给校准概率，只判断不生成 token。candle 移植，e2e 验证过。</p>
-            <div class="p-tags"><span>candle</span><span>概率</span><span>护栏</span></div>
+            <div class="p-k">performance · 高性能</div>
+            <h3>吞吐扛得住</h3>
+            <p>radix 前缀缓存 + 连续批调度 + 张量嫁接，KV 零拷贝复用；批量解码 [B,1] 一次前向，可观测、有断言。</p>
+            <div class="p-tags"><span>radix</span><span>连续批</span><span>嫁接</span></div>
           </div>
         </div>
 
@@ -120,7 +120,7 @@
           <div class="tile reveal cap" data-open-entry="concept-scheduler"><div class="ico" style="color:var(--vio)">☰</div><div class="t-k">调度</div><h3>调度</h3><p>连续批 · chunked prefill · 三种出队策略 · LRU 淘汰</p><div class="value">看对应文档 <b>→</b></div></div>
           <div class="tile reveal cap" data-open-entry="metric-1"><div class="ico" style="color:var(--sky)">Σ</div><div class="t-k">指标</div><h3>指标</h3><p>compute_saved · prefill_skip · forward/输出 · kv_util</p><div class="value">看对应文档 <b>→</b></div></div>
           <div class="tile reveal cap" data-open-entry="rel-laya"><div class="ico" style="color:var(--gold)">◆</div><div class="t-k">决策</div><h3>决策</h3><p>Laya · choice / score / noul · 校准概率 · 一键蒸馏</p><div class="value">看对应文档 <b>→</b></div></div>
-          <div class="tile reveal cap" data-open-entry="why-6"><div class="ico" style="color:var(--jad-soft)">◍</div><div class="t-k">生态</div><h3>生态</h3><p>SGLang 共部署 · pagoda-hf 真权重 · 14 篇小白文档</p><div class="value">看对应文档 <b>→</b></div></div>
+          <div class="tile reveal cap" data-open-entry="why-6"><div class="ico" style="color:var(--jad-soft)">◍</div><div class="t-k">生态</div><h3>生态</h3><p>OpenAI 兼容 · 共部署网关 · pagoda-hf 真权重</p><div class="value">看对应文档 <b>→</b></div></div>
         </div>
 
         <div class="grid-3" style="margin-top:20px">
@@ -134,7 +134,7 @@
           <a class="tile reveal" href="#arch">
             <div class="ico" style="color:var(--jad)">02</div>
             <div class="t-k">Architecture</div>
-            <h3>代码和 SGLang 怎么对应</h3>
+            <h3>代码地图，一目了然</h3>
             <p>每个模块都能对上号：scheduler → engine.rs，radix → radix_cache.rs，paged KV → kv_cache.rs。</p>
             <div class="value">看模块映射表 <b>→</b></div>
           </a>
@@ -157,7 +157,7 @@
         <div class="section-head reveal">
           <span class="eyebrow"><span class="d"></span> Why · 它到底做了什么</span>
           <h2 class="section-title">跟别的实现，<span class="accent">差在哪</span></h2>
-          <p class="section-sub">一句话：SGLang 的架构思路 + Rust 的标准库 + 几个 agent 场景原语。下面每条都对应代码，不是口号。</p>
+          <p class="section-sub">一句话：经过生产验证的推理机制 + Rust 的标准库 + 几个 agent 场景原语。下面每条都对应代码，不是口号。</p>
         </div>
 
         <div class="grid-3">
@@ -220,9 +220,9 @@
           <div class="tile gold reveal">
             <div class="ico">⚓</div>
             <div class="t-k">co-deploy</div>
-            <h3>和 SGLang 共部署</h3>
-            <p>一条脚本起两个进程：pagoda 守门（健康检查、指标、checkpoint），生成请求透传给 SGLang。</p>
-            <div class="value">现有 SGLang 部署不用改，接上一层控制面即可。</div>
+            <h3>共部署网关</h3>
+            <p>一条脚本起两个进程：pagoda 守门（健康检查、指标、checkpoint），生成请求透传给上游引擎。</p>
+            <div class="value">现有部署不用改，接上一层控制面即可。</div>
           </div>
         </div>
 
@@ -243,9 +243,9 @@
     <div class="section">
       <div class="wrap">
         <div class="section-head reveal">
-          <span class="eyebrow"><span class="d" style="background:var(--vio);box-shadow:0 0 12px var(--vio)"></span> SGLang · Rust</span>
-          <h2 class="section-title">不是替代，<span class="accent vio">是另一个实现</span></h2>
-          <p class="section-sub">API、DSL、模块命名都照着 SGLang 来，客户端改个 base_url 就能用。上游自己也在推进 rust/sglang-mm 和 rust/sglang-server，那是另一条线，跟这里不冲突。</p>
+          <span class="eyebrow"><span class="d" style="background:var(--vio);box-shadow:0 0 12px var(--vio)"></span> 整合 · 兼容</span>
+          <h2 class="section-title">接上，<span class="accent vio">就能用</span></h2>
+          <p class="section-sub">API、DSL、模块命名都和主流推理引擎对齐，客户端改个 base_url 就能用。已有部署不用推倒，加一层共部署控制面即可。</p>
         </div>
 
         <div class="grid-3">
@@ -283,7 +283,7 @@
         <p class="muted reveal" style="font-size:13.5px;margin-top:18px">这些都向后兼容：客户端不调就不会碰到。</p>
 
         <div class="section-head reveal" style="margin-top:60px">
-          <span class="eyebrow"><span class="d" style="background:var(--gold);box-shadow:0 0 12px var(--gold)"></span> 共部署：pagoda 守门，SGLang 干活</span>
+          <span class="eyebrow"><span class="d" style="background:var(--gold);box-shadow:0 0 12px var(--gold)"></span> 共部署：pagoda 守门，引擎干活</span>
         </div>
         <div class="rel-flow reveal">
           <div class="rel-node"><div class="r-k">client</div><div class="r-t">客户端</div><div class="r-s">只认 pagoda 端口</div></div>
@@ -295,7 +295,7 @@
         <p class="rel-cap reveal">网关把 /generate 和 /v1/chat/* 原样透传，自己只留控制面；上游挂了就回 502，网关不崩。</p>
 
         <div class="section-head reveal" style="margin-top:60px">
-          <span class="eyebrow"><span class="d" style="background:var(--sky);box-shadow:0 0 12px var(--sky)"></span> 和上游 sglang-rust 的关系</span>
+          <span class="eyebrow"><span class="d" style="background:var(--sky);box-shadow:0 0 12px var(--sky)"></span> 和上游 Rust 线的关系</span>
         </div>
         <div class="grid-2">
           <div class="tile reveal">
@@ -465,10 +465,10 @@ I want a refund, and I need to cancel my account today.</code></pre>
         <div class="section-head reveal" style="margin-top:60px">
           <span class="eyebrow"><span class="d" style="background:var(--vio);box-shadow:0 0 12px var(--vio)"></span> 从大模型到小模型 · 闭环</span>
           <h2 class="section-title">大模型打头，<span class="accent vio">Laya 在中间</span>，小模型收尾</h2>
-          <p class="section-sub">第一层保留 SGLang 的特性：大模型由 SGLang 派发，radix 前缀缓存 + 连续批调度负责吞吐。中间不是 RLHF 的“讨好人奖励”，而是 Laya 的校准概率。</p>
+          <p class="section-sub">第一层是生成层：radix 前缀缓存 + 连续批调度负责大模型吞吐。中间不是 RLHF 的“讨好人奖励”，而是 Laya 的校准概率。</p>
         </div>
         <div class="rel-flow reveal">
-          <div class="rel-node"><div class="r-k">layer 1 · SGLang</div><div class="r-t">大模型</div><div class="r-s">radix + 连续批调度</div></div>
+          <div class="rel-node"><div class="r-k">layer 1 · 生成层</div><div class="r-t">大模型</div><div class="r-s">radix + 连续批调度</div></div>
           <div class="rel-arrow">→ 数据 / 作答</div>
           <div class="rel-node"><div class="r-k">layer 2 · Laya</div><div class="r-t">自动判卷 + 软标签</div><div class="r-s">校准概率，非 RL</div></div>
           <div class="rel-arrow">→ 蒸馏</div>
@@ -489,7 +489,7 @@ I want a refund, and I need to cancel my account today.</code></pre>
         <div class="callout reveal">
           <h4>关键词：radix / 连续批调度 / 校准概率</h4>
           <ul>
-            <li>SGLang 的特性留在第一层：大模型的吞吐交给 radix 前缀缓存和连续批调度，不会因为蒸馏被阉割。</li>
+            <li>生成层的吞吐交给 radix 前缀缓存和连续批调度，不会因为蒸馏被阉割。</li>
             <li>蒸馏的监督信号是概率分布，不是“是否讨人喜欢”，所以小模型不谄媚、判断上不幻觉。</li>
           </ul>
         </div>
@@ -519,7 +519,7 @@ I want a refund, and I need to cancel my account today.</code></pre>
         </div>
 
         <table class="mod-table reveal">
-          <thead><tr><th>模块</th><th>职责</th><th>对应 SGLang 概念</th></tr></thead>
+          <thead><tr><th>模块</th><th>职责</th><th>概念对照</th></tr></thead>
           <tbody>
             <tr><td>spec.rs</td><td>数据模型</td><td>srt.sampling_params / GenerationOutput</td></tr>
             <tr><td>radix_cache.rs</td><td>前缀缓存</td><td>RadixAttention 的 radix tree</td></tr>
@@ -620,7 +620,7 @@ I want a refund, and I need to cancel my account today.</code></pre>
   <div class="panel">
     <div class="search-row">
       <span class="mag" aria-hidden="true">⌕</span>
-      <input class="search-input" id="search-input" type="text" placeholder="搜文档 / 机制 / SGLang / Laya / 指标…" autocomplete="off">
+      <input class="search-input" id="search-input" type="text" placeholder="搜文档 / 机制 / 缓存 / 调度 / Laya…" autocomplete="off">
       <span class="kbd" style="font-family:var(--mono);font-size:11px;color:var(--faint)">Esc</span>
     </div>
     <div class="search-count" id="search-count"></div>

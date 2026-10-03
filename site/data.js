@@ -89,8 +89,8 @@ window.DOC_INDEX = [
     points:["KV 张量本体跨请求复用","物理零 prefill（134-token 归零）","和逻辑缓存正交，和批量解码叠加"],
     note:"几千 token 的系统提示，不用每个 worker 都重算一遍。" },
 
-  { id:"guide-12", bucket:"docs", title:"12 · 与 SGLang 一键共部署", en:"Co-deploy with SGLang", minutes:"8 min",
-    blurb:"pagoda 守门，SGLang 干活，一条脚本起两个进程。",
+  { id:"guide-12", bucket:"docs", title:"12 · 一键共部署网关", en:"Co-deploy with SGLang", minutes:"8 min",
+    blurb:"pagoda 守门，引擎干活，一条脚本起两个进程。",
     body:"一条命令双进程：pagoda 网关保留 /health /stats /checkpoint*，/generate 和 /v1/chat/* 原样透传给 SGLang worker。上游挂了回 502，网关不崩。现有部署不用改。",
     keywords:["co-deploy","共部署","gateway","网关","upstream","代理","透传","sglang worker","proxy"],
     points:["一条脚本拉起双进程","控制面本地，生成透传","上游挂了回干净的 502"],
@@ -172,7 +172,7 @@ window.DOC_INDEX = [
     body:"sgl-project/sglang，高性能 LLM 服务框架。Pagoda 不是它的 fork，是照着核心思路用 Rust 干净重写。同 Apache-2.0，署名在 NOTICE。",
     keywords:["sglang","上游","python","radixattention","gpu","推理引擎"] },
 
-  { id:"rel-compat", bucket:"sglang", title:"SGLang 兼容矩阵", en:"Perfect fusion", minutes:"",
+  { id:"rel-compat", bucket:"sglang", title:"兼容矩阵", en:"Perfect fusion", minutes:"",
     blurb:"API 直通 + DSL 直通 + 架构映射。",
     body:"base_url 指到 pagoda 就能用；/generate、/v1/chat/completions 同形；gen/select/fork 同构；模块一一对应。",
     keywords:["兼容","api","dsl","openai","base_url","映射","fusion"] },
@@ -259,8 +259,8 @@ window.DOC_INDEX = [
     body:"distill/ 是一键框架：teacher.py 调付费/私有大模型出软标签，train.py 蒸出判断头（非自回归，无 prefill/decode，serve.py 本地部署即可，不用 SGLang）；如果学生是自回归生成小模型，那就有 prefill/decode，用 serve_sglang.py 基于 SGLang 本地部署。",
     keywords:["distill","一键","teacher","serve","sglang","prefill","decode","部署","软标签","蒸馏"] },
 
-  { id:"laya-pipeline", bucket:"laya", title:"大模型 → Laya → 小模型（避开 RLHF）", en:"SGLang → Laya distill", minutes:"",
-    blurb:"大模型由 SGLang 派发，中间用 Laya 的校准概率自动蒸小模型，不靠 RLHF。",
+  { id:"laya-pipeline", bucket:"laya", title:"大模型 → Laya → 小模型（避开 RLHF）", en:"Teacher → Laya distill", minutes:"",
+    blurb:"大模型走生成层（radix + 连续批），中间用 Laya 的校准概率自动蒸小模型，不靠 RLHF。",
     body:"三层闭环：大模型层用 SGLang 的 radix 前缀缓存和连续批调度派发生成；中间 Laya 用严格适当评分规则给校准概率当软标签；最后蒸馏出只出概率、不生成自由文本的小模型。相比 RLHF 用人类偏好奖励，这套不会学成“说你想听的”谄媚模型，判断类任务不幻觉。",
     keywords:["sglang","radix","continuous batching","rlhf","谄媚","sycophancy","幻觉","蒸馏","laya","校准概率","proper scoring","大模型","小模型"] },
   // ============ 卖点 / why ============
@@ -289,7 +289,7 @@ window.DOC_INDEX = [
     body:"从“推理服务是什么”讲到调度指标，每篇一句总结 + 类比 + 图 + 动手命令 + 和 SGLang/vLLM 对照。",
     keywords:["文档","教程","小白","中文"] },
 
-  { id:"why-6", bucket:"why", title:"和 SGLang 共部署", en:"Coopetition", minutes:"",
+  { id:"why-6", bucket:"why", title:"共部署网关", en:"Coopetition", minutes:"",
     blurb:"不抢主战场，只补控制面。",
     body:"现有 SGLang 部署不用改，接一层网关就有 checkpoint、指标和护栏。",
     keywords:["竞合","共部署","sglang","网关"] },
@@ -305,7 +305,7 @@ window.BUCKET_LABELS = {
   all: { zh:"全部", dot:"#F3EEE4" },
   docs: { zh:"文档", dot:"#FF5A36" },
   concept: { zh:"核心机制", dot:"#39D08F" },
-  sglang: { zh:"SGLang·Rust", dot:"#8F7FF2" },
+  sglang: { zh:"整合·兼容", dot:"#8F7FF2" },
   laya: { zh:"Laya", dot:"#E8BC5C" },
   model: { zh:"模型", dot:"#F472B6" },
   metrics: { zh:"指标", dot:"#54C1EE" },

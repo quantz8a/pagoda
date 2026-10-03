@@ -197,7 +197,7 @@
     var q = $("#search-input").value;
     var res = search(q);
     var box = $("#search-results");
-    $("#search-count").textContent = q ? (res.length ? "找到 " + res.length + " 条 · ↑↓ 选择 · Enter 打开 · Esc 关闭" : "没找到，换个词试试？比如 “checkpoint” 或 “前缀缓存”") : "输入关键词，检索 文档 / 机制 / SGLang·Rust / Laya / 指标";
+    $("#search-count").textContent = q ? (res.length ? "找到 " + res.length + " 条 · ↑↓ 选择 · Enter 打开 · Esc 关闭" : "没找到，换个词试试？比如 “checkpoint” 或 “前缀缓存”") : "输入关键词，检索 文档 / 机制 / 整合 / Laya / 指标";
     if (!q) { box.innerHTML = ""; return; }
     box.innerHTML = res.map(function (e, i) {
       var lb = LABELS[e.bucket] || { zh: "", dot: "#888" };
