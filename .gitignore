@@ -2,3 +2,13 @@ target/
 verify-p1.log
 __pycache__/
 *.pyc
+verify-p1-run.log
+
+# distill 运行时产物（种子与脚本入库，数据/权重/日志不入）
+distill/out/
+distill/dataset.jsonl
+distill/*.log
+distill/models/
+
+# 并行会话的共部署实验脚本，不入库
+distill/codeploy.*

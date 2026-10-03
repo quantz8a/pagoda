@@ -1,0 +1,7 @@
+openai>=1.40
+torch>=2.1
+transformers>=4.46
+peft>=0.13
+accelerate>=0.34
+# 本地教师/学生部署（二选一环境安装）：
+#   pip install "sglang[all]"     # 一条龙：SGLang 既服务教师也服务学生

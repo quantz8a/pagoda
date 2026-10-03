@@ -40,8 +40,19 @@
      嫁接只是加速器，正确性从不依赖它
 ```
 
-容量有上限（默认 128 条，`PAGODA_KV_VAULT_ENTRIES` 可调），LRU 淘汰——
+容量双封顶：条数（`PAGODA_KV_VAULT_ENTRIES`，默认 128）与字节预算
+（`PAGODA_KV_VAULT_BYTES`，默认 2 GiB，按张量实际大小估算），LRU 淘汰——
 淘汰只影响"下次还能不能命中"，永远不影响对错。
+
+2026-10-02 升级：仓库从稀疏键哈希表换成 **radix 键控 trie**——
+路径的每一个前缀深度都可命中，不再需要"恰好撞到存过的边界"：
+
+```
+稀疏键（旧）                          radix 键控（新）
+键: [完整prompt] [完整路径]           每个深度都是潜在命中点
+"The capital of France"  ← 没存过     ← 沿 trie 走到第 5 层
+  → 完全 miss，嫁接 0 个                → 嫁接 4 个（prompt_len-1）
+```
 
 ## 在 pagoda 里动手试试
 
@@ -80,8 +91,8 @@ prompt 越长省得越多：agent 场景常见的"几千 token 系统提示 + �
   永远不是"算错了"。
 - vLLM 的 APC 是块级复用；pagoda 的嫁接是 token 级切片（`narrow` 视图，
   零拷贝），粒度更细，且与逻辑缓存后端（radix 或 APC）正交。
-- 稀疏键是刻意的取舍：只在"prompt 边界"和"完整路径"两处存钥匙，内存可控；
-  任意深度命中（完整 radix 键控）是规模化路线，见 DESIGN.md。
+- 索引结构是 radix trie（与 SGLang 同源）：插入/命中/淘汰都是 O(路径长)，
+  逐 token 扇出；重复入库同一路径会替换旧快照而不是泄漏预算。
 
 ## 常见疑问
 

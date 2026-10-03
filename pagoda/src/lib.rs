@@ -25,6 +25,7 @@ pub mod apc;
 pub mod dsl;
 pub mod engine;
 pub mod grammar;
+pub mod http_client;
 pub mod json;
 pub mod kv_cache;
 pub mod model;
@@ -34,6 +35,7 @@ pub mod sampler;
 pub mod server;
 pub mod spec;
 pub mod tokenizer;
+pub mod triage;
 
 pub use apc::ApcCache;
 pub use dsl::{Op, Program, StreamResult};

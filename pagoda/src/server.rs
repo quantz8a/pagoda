@@ -12,14 +12,67 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::engine::{CheckpointId, Engine, EngineStats};
 use crate::grammar::Grammar;
+use crate::http_client;
 use crate::json::{self, Value};
 use crate::model::ModelEngine;
 use crate::spec::{FinishReason, GenerationOutput, SamplingParams, WriteRequest};
 use crate::tokenizer::Tokenizer;
+
+/// Reverse-proxy target: an upstream inference server (e.g. SGLang's
+/// OpenAI-compatible HTTP server) that receives the heavy generation
+/// traffic while pagoda keeps the control plane (`/health`, `/stats`,
+/// `/checkpoint*`) local.
+pub struct Proxy {
+    /// `host:port` for dialing.
+    addr: String,
+    /// Original `http://...` URL, surfaced in `/stats`.
+    url: String,
+    /// Requests forwarded upstream so far.
+    proxied: AtomicU64,
+}
+
+impl Proxy {
+    /// Build from `http://host[:port]`; anything else returns `None`.
+    pub fn from_url(url: &str) -> Option<Self> {
+        let addr = http_client::parse_http_addr(url)?;
+        Some(Self {
+            addr,
+            url: url.trim_end_matches('/').to_string(),
+            proxied: AtomicU64::new(0),
+        })
+    }
+
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub fn proxied_requests(&self) -> u64 {
+        self.proxied.load(Ordering::Relaxed)
+    }
+
+    /// Forward one JSON request verbatim; passthrough (status, body).
+    /// Upstream failures degrade to a 502 instead of poisoning the server.
+    fn forward(&self, method: &str, path: &str, body: Option<&str>) -> HttpResponse {
+        match http_client::request(&self.addr, method, path, body, http_client::DEFAULT_TIMEOUT) {
+            Ok((status, body)) => {
+                self.proxied.fetch_add(1, Ordering::Relaxed);
+                HttpResponse { status, body }
+            }
+            Err(e) => HttpResponse::json(
+                502,
+                &format!(
+                    r#"{{"error":"upstream_unreachable","upstream":"{}","detail":"{e}"}}"#,
+                    self.url
+                ),
+            ),
+        }
+    }
+}
 
 /// A raw HTTP response ready to be serialized on the wire.
 #[derive(Debug)]
@@ -29,7 +82,7 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    fn json(status: u16, body: &str) -> Self {
+    pub fn json(status: u16, body: &str) -> Self {
         Self {
             status,
             body: body.to_string(),
@@ -99,11 +152,75 @@ pub fn handle<E: ServingEngine>(
     path: &str,
     body: Option<&str>,
 ) -> HttpResponse {
+    handle_with_proxy(engine, None, method, path, body)
+}
+
+/// Like [`handle`], but with an optional upstream [`Proxy`]: generation
+/// endpoints (`/generate`, `/v1/chat/completions`) forward verbatim to the
+/// upstream worker; the control plane stays local.
+pub fn handle_with_proxy<E: ServingEngine>(
+    engine: &mut E,
+    proxy: Option<&Proxy>,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> HttpResponse {
+    handle_with_triage(engine, proxy, None, method, path, body)
+}
+
+/// Pull the user's text out of a request body: `text` for /generate, the
+/// last `role=="user"` message content for /v1/chat/completions.
+fn extract_user_text(path: &str, body: &str) -> Option<String> {
+    let v = crate::json::parse(body).ok()?;
+    if path == "/generate" {
+        return v
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+    if let Some(Value::Array(items)) = v.get("messages") {
+        for m in items.iter().rev() {
+            if m.get("role").and_then(Value::as_str) == Some("user") {
+                if let Some(Value::String(s)) = m.get("content") {
+                    return Some(s.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// [`handle_with_proxy`] plus an optional Laya [`Triage`] gate: generation
+/// endpoints are judged by the System-1 decision model first; escalated
+/// requests get a human-handoff reply without touching the upstream worker.
+pub fn handle_with_triage<E: ServingEngine>(
+    engine: &mut E,
+    proxy: Option<&Proxy>,
+    triage: Option<&crate::triage::Triage>,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> HttpResponse {
+    if let Some(proxy) = proxy {
+        // Heavy generation goes to the upstream worker. Everything else
+        // (health, stats, checkpoints) is pagoda-local control plane.
+        if method == "POST" && (path == "/generate" || path == "/v1/chat/completions") {
+            if let Some(t) = triage {
+                if let Some(text) = body.and_then(|b| extract_user_text(path, b)) {
+                    let out = t.check(&text);
+                    if out.escalate && !t.shadow {
+                        return HttpResponse::json(200, &t.escalation_body(&out));
+                    }
+                }
+            }
+            return proxy.forward(method, path, body);
+        }
+    }
     match (method, path) {
         ("GET", "/health") => HttpResponse::json(200, r#"{"status":"ok"}"#),
         ("GET", "/stats") => {
             let s = engine.stats();
-            let body = Value::Object(vec![
+            let mut fields = vec![
                 ("total_requests".to_string(), Value::Number(s.total_requests as f64)),
                 ("total_prompt_tokens".to_string(), Value::Number(s.total_prompt_tokens as f64)),
                 ("total_prefill_tokens".to_string(), Value::Number(s.total_prefill_tokens as f64)),
@@ -165,8 +282,36 @@ pub fn handle<E: ServingEngine>(
                 ("kv_utilization".to_string(), Value::Number(s.kv_utilization())),
                 ("faulted_requests".to_string(), Value::Number(s.faulted_requests as f64)),
                 ("rejected_requests".to_string(), Value::Number(s.rejected_requests as f64)),
-            ])
-            .to_json();
+            ];
+            if let Some(proxy) = proxy {
+                fields.push((
+                    "upstream".to_string(),
+                    Value::String(proxy.url().to_string()),
+                ));
+                fields.push((
+                    "proxied_requests".to_string(),
+                    Value::Number(proxy.proxied_requests() as f64),
+                ));
+            }
+            if let Some(t) = triage {
+                fields.push((
+                    "triage".to_string(),
+                    Value::String(t.url().to_string()),
+                ));
+                fields.push((
+                    "triaged_requests".to_string(),
+                    Value::Number(t.triaged() as f64),
+                ));
+                fields.push((
+                    "escalated_requests".to_string(),
+                    Value::Number(t.escalated() as f64),
+                ));
+                fields.push((
+                    "triage_unavailable".to_string(),
+                    Value::Number(t.unavailable() as f64),
+                ));
+            }
+            let body = Value::Object(fields).to_json();
             HttpResponse::json(200, &body)
         }
         ("POST", "/generate") => {
@@ -420,8 +565,9 @@ fn chat_response(out: &GenerationOutput) -> Value {
     ])
 }
 
-/// Read one HTTP/1.1 request from a connection.
-fn read_http_request(stream: &mut TcpStream) -> std::io::Result<(String, String, String)> {
+/// Read one HTTP/1.1 request from a connection. Public so companion crates
+/// (e.g. pagoda-hf's Laya server) can reuse the same tiny wire protocol.
+pub fn read_http_request(stream: &mut TcpStream) -> std::io::Result<(String, String, String)> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader.read_line(&mut line)?;
@@ -449,7 +595,8 @@ fn read_http_request(stream: &mut TcpStream) -> std::io::Result<(String, String,
     Ok((method, path, String::from_utf8_lossy(&body).into_owned()))
 }
 
-fn write_http_response(stream: &mut TcpStream, resp: &HttpResponse) -> std::io::Result<()> {
+/// Write one HTTP/1.1 response (JSON content type, connection close).
+pub fn write_http_response(stream: &mut TcpStream, resp: &HttpResponse) -> std::io::Result<()> {
     let reason = match resp.status {
         200 => "OK",
         400 => "Bad Request",
@@ -471,13 +618,51 @@ pub fn run<E>(engine: Arc<Mutex<E>>, addr: &str) -> std::io::Result<()>
 where
     E: ServingEngine + Send + 'static,
 {
+    run_with_proxy(engine, addr, None)
+}
+
+/// [`run`] with an upstream [`Proxy`]: generation endpoints forward to the
+/// upstream worker, the control plane stays local.
+pub fn run_with_proxy<E>(
+    engine: Arc<Mutex<E>>,
+    addr: &str,
+    proxy: Option<Arc<Proxy>>,
+) -> std::io::Result<()>
+where
+    E: ServingEngine + Send + 'static,
+{
+    run_with_triage(engine, addr, proxy, None)
+}
+
+/// [`run_with_proxy`] plus an optional Laya [`crate::triage::Triage`] gate.
+pub fn run_with_triage<E>(
+    engine: Arc<Mutex<E>>,
+    addr: &str,
+    proxy: Option<Arc<Proxy>>,
+    triage: Option<Arc<crate::triage::Triage>>,
+) -> std::io::Result<()>
+where
+    E: ServingEngine + Send + 'static,
+{
     let listener = TcpListener::bind(addr)?;
     let local = listener.local_addr()?;
-    eprintln!("pagoda serving on http://{local}");
+    match &proxy {
+        Some(p) => eprintln!("pagoda serving on http://{local} (upstream: {})", p.url()),
+        None => eprintln!("pagoda serving on http://{local}"),
+    }
+    if let Some(t) = &triage {
+        eprintln!(
+            "triage: laya at {}{}",
+            t.url(),
+            if t.shadow { " (shadow)" } else { "" }
+        );
+    }
     for conn in listener.incoming() {
         match conn {
             Ok(mut stream) => {
                 let engine = Arc::clone(&engine);
+                let proxy = proxy.clone();
+                let triage = triage.clone();
                 std::thread::spawn(move || {
                     let _ = stream.set_nodelay(true);
                     let result = read_http_request(&mut stream);
@@ -493,7 +678,14 @@ where
                     };
                     let response = {
                         let mut guard = engine.lock().unwrap();
-                        handle(&mut *guard, &method, &path, Some(&body))
+                        handle_with_triage(
+                            &mut *guard,
+                            proxy.as_deref(),
+                            triage.as_deref(),
+                            &method,
+                            &path,
+                            Some(&body),
+                        )
                     };
                     let _ = write_http_response(&mut stream, &response);
                 });
@@ -545,4 +737,3 @@ mod tests {
         assert!(parse_sampling(&v).grammar.is_some());
     }
 }
-

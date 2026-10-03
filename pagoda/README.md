@@ -36,7 +36,7 @@ compact, testable reference implementation:
 ```powershell
 cd pagoda
 
-# one-click: build + 85 tests + demos
+# one-click: build + 93 tests + demos
 powershell -ExecutionPolicy Bypass -File scripts\quickstart.ps1   # bash: scripts/quickstart.sh
 
 # run the test suite
@@ -124,7 +124,7 @@ pagoda/
 ├── scripts/            # one-click quickstart + agent-cluster demo (ps1/sh)
 └── tests/              # engine / fault / admission / apc / checkpoint /
                         # session / batch / graft / property / grammar /
-                        # system tests (85 total)
+                        # system tests (93 total)
 ```
 
 ## Design notes

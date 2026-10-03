@@ -19,6 +19,11 @@
 | 9 | [开源协议：为什么用 Apache-2.0](09-open-source-license.md) | 宽松开源、怎么自由使用和贡献 |
 | 10 | [批量解码](10-batched-decode.md) | 一次前向养活整个批次：权重只读一遍，decode_batch_factor 可观测 |
 | 11 | [张量级前缀嫁接](11-tensor-kv-grafting.md) | 真·RadixAttention：KV 张量本体跨请求复用，prompt 物理上零重算 |
+| 12 | [与 SGLang 一键共部署](12-sglang-co-deploy.md) | pagoda 守大门（控制面），SGLang 干重活（GPU worker），一条脚本拉起 |
+| 13 | [Laya：不生成文本的决策模型](13-laya-system1.md) | System 1 分诊台：choice/score/noul 三题型，一次前向出校准概率 |
+| 14 | [一键部署 Laya](14-laya-one-click-deploy.md) | 17.9MB 单二进制替代 5.3GB Python 环境，一条脚本构建+启动+冒烟 |
+| 15 | [一键蒸馏：付费大模型教出本地小模型](15-distill.md) | 教师造数→LoRA 蒸馏→逐字段考试→SGLang 部署；顺带说清什么时候根本不需要 SGLang |
+| 16 | [分诊网关](16-triage-gateway.md) | System 1 给 System 2 当门卫：Laya 门口分诊，危险工单 0 GPU 转人工，fail-open |
 
 ## 怎么用这份文档
 
@@ -37,7 +42,7 @@
 ```powershell
 cd pagoda
 powershell -ExecutionPolicy Bypass -File scripts\quickstart.ps1   # 一键：构建+测试+演示
-cargo test --offline                                        # 85 项测试全绿即环境 OK
+cargo test --offline                                        # 93 项测试全绿即环境 OK
 cargo run --offline --bin pagoda -- sample -p "你好" --repeat 2
 cargo run --offline --bin pagoda -- serve --port 8080       # HTTP 服务
 ```

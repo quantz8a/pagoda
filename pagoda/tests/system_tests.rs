@@ -226,3 +226,262 @@ fn http_checkpoint_lifecycle() {
     );
     assert_eq!(status, 404);
 }
+
+/// A canned upstream worker (stand-in for SGLang): replies with fixed JSON
+/// and records the request lines it received.
+fn mock_upstream(port: u16, received: Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind upstream");
+    std::thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut stream) = conn else { continue };
+            let received = Arc::clone(&received);
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                // Read until the full body arrived (headers + content-length).
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            let text = String::from_utf8_lossy(&buf);
+                            if let Some(head_end) = text.find("\r\n\r\n") {
+                                let len: usize = text[..head_end]
+                                    .to_ascii_lowercase()
+                                    .split("\r\n")
+                                    .find_map(|h| h.strip_prefix("content-length:"))
+                                    .and_then(|v| v.trim().parse().ok())
+                                    .unwrap_or(0);
+                                if buf.len() >= head_end + 4 + len {
+                                    received.lock().unwrap().push(text.into_owned());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                let resp = r#"{"text":"upstream says hi","finish_reason":"length","meta":{"upstream":true}}"#;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    resp.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(resp.as_bytes());
+            });
+        }
+    });
+}
+
+/// Proxy mode: generation endpoints forward verbatim to the upstream worker
+/// (SGLang co-deployment), while the control plane (health/stats/checkpoints)
+/// stays local and stats expose the upstream + proxied request count.
+#[test]
+fn http_proxy_forwards_generation_and_keeps_control_plane() {
+    let upstream_port = free_port();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    mock_upstream(upstream_port, Arc::clone(&received));
+    wait_until_ready(upstream_port);
+
+    let engine = ToyEngine::toy(EngineConfig {
+        num_kv_blocks: 64,
+        block_size: 8,
+        ..EngineConfig::default()
+    });
+    let proxy = pagoda::server::Proxy::from_url(&format!("http://127.0.0.1:{upstream_port}"))
+        .expect("valid upstream url");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    std::thread::spawn(move || {
+        server::run_with_proxy(Arc::new(Mutex::new(engine)), &addr, Some(Arc::new(proxy)))
+            .expect("server run");
+    });
+    wait_until_ready(port);
+
+    // 1. /generate is proxied verbatim: the upstream's canned body comes back.
+    let (status, body) = http(
+        port,
+        "POST",
+        "/generate",
+        Some(r#"{"text":"hello upstream","sampling_params":{"max_tokens":4}}"#),
+    );
+    assert_eq!(status, 200, "proxied body: {body}");
+    assert!(body.contains("upstream says hi"), "body: {body}");
+
+    // 2. /v1/chat/completions is proxied too.
+    let (status, body) = http(
+        port,
+        "POST",
+        "/v1/chat/completions",
+        Some(r#"{"messages":[{"role":"user","content":"hi"}]}"#),
+    );
+    assert_eq!(status, 200);
+    assert!(body.contains("upstream says hi"), "body: {body}");
+
+    // The upstream saw exactly these two requests, with bodies intact.
+    {
+        let got = received.lock().unwrap();
+        assert_eq!(got.len(), 2, "upstream requests: {got:?}");
+        assert!(got[0].starts_with("POST /generate "), "got: {}", got[0]);
+        assert!(got[0].contains("hello upstream"), "got: {}", got[0]);
+        assert!(
+            got[1].starts_with("POST /v1/chat/completions "),
+            "got: {}",
+            got[1]
+        );
+    }
+
+    // 3. Control plane stays local: health does not hit the upstream.
+    let (status, body) = http(port, "GET", "/health", None);
+    assert_eq!(status, 200);
+    assert!(body.contains("\"status\":\"ok\""));
+    assert_eq!(received.lock().unwrap().len(), 2, "health must stay local");
+
+    // 4. /stats is local and exposes the upstream + proxied count.
+    let (status, body) = http(port, "GET", "/stats", None);
+    assert_eq!(status, 200);
+    let v = pagoda::json::parse(&body).expect("stats json");
+    assert_eq!(
+        v.get("proxied_requests").and_then(|t| t.as_f64()),
+        Some(2.0),
+        "stats body: {body}"
+    );
+    assert!(
+        v.get("upstream")
+            .and_then(|t| t.as_str())
+            .is_some_and(|u| u.contains(&upstream_port.to_string())),
+        "stats body: {body}"
+    );
+
+    // 5. Checkpoints stay local too (upstream never sees them).
+    let (status, _) = http(port, "POST", "/checkpoint", Some(r#"{"text":"trunk"}"#));
+    assert_eq!(status, 200);
+    assert_eq!(received.lock().unwrap().len(), 2);
+}
+
+/// A canned Laya decision server: answers the triage questions with fixed
+/// probabilities tuned per request — texts containing "威胁" escalate,
+/// everything else passes clean.
+fn mock_laya(port: u16) {
+    let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind laya");
+    std::thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut stream) = conn else { continue };
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            let text = String::from_utf8_lossy(&buf);
+                            if let Some(head_end) = text.find("\r\n\r\n") {
+                                let len: usize = text[..head_end]
+                                    .to_ascii_lowercase()
+                                    .split("\r\n")
+                                    .find_map(|h| h.strip_prefix("content-length:"))
+                                    .and_then(|v| v.trim().parse().ok())
+                                    .unwrap_or(0);
+                                if buf.len() >= head_end + 4 + len {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                let text = String::from_utf8_lossy(&buf);
+                // Judge only the request's state field — the triage questions
+                // themselves contain words like "cancel" and would otherwise
+                // look hostile to this mock.
+                let state = text
+                    .split(r#""state":""#)
+                    .nth(1)
+                    .and_then(|rest| rest.split('"').next())
+                    .unwrap_or("");
+                let hostile = state.contains("威胁") || state.contains("cancel");
+                let (churn, human) = if hostile { (0.91, 0.85) } else { (0.03, 0.02) };
+                let resp = format!(
+                    r#"{{"model":"rl-agent","answers":{{"department":{{"type":"choice","choice":"billing","confidence":0.93}},"churn_risk":{{"type":"noul","noul":{churn}}},"needs_human":{{"type":"noul","noul":{human}}}}},"usage":{{"input_tokens":64,"output_tokens":0}}}}"#
+                );
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    resp.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(resp.as_bytes());
+            });
+        }
+    });
+}
+
+/// Triage gateway: the Laya System-1 gate sits between the client and the
+/// upstream worker. Safe requests forward; hostile ones get a human-handoff
+/// reply and never reach the (expensive) generation worker.
+#[test]
+fn http_triage_gateway_routes_and_escalates() {
+    let laya_port = free_port();
+    mock_laya(laya_port);
+    wait_until_ready(laya_port);
+    let upstream_port = free_port();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    mock_upstream(upstream_port, Arc::clone(&received));
+    wait_until_ready(upstream_port);
+
+    let engine = ToyEngine::toy(EngineConfig::default());
+    let proxy = server::Proxy::from_url(&format!("http://127.0.0.1:{upstream_port}")).unwrap();
+    let triage = pagoda::triage::Triage::from_url(&format!("http://127.0.0.1:{laya_port}")).unwrap();
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    std::thread::spawn(move || {
+        server::run_with_triage(
+            Arc::new(Mutex::new(engine)),
+            &addr,
+            Some(Arc::new(proxy)),
+            Some(Arc::new(triage)),
+        )
+        .expect("server run");
+    });
+    wait_until_ready(port);
+
+    // 1. Safe request: triaged, then forwarded to the upstream worker.
+    let (status, body) = http(
+        port,
+        "POST",
+        "/v1/chat/completions",
+        Some(r#"{"messages":[{"role":"user","content":"帮我改一下收货地址"}]}"#),
+    );
+    assert_eq!(status, 200);
+    assert!(body.contains("upstream says hi"), "safe must forward: {body}");
+    assert_eq!(received.lock().unwrap().len(), 1);
+
+    // 2. Hostile request: escalated, upstream never sees it.
+    let (status, body) = http(
+        port,
+        "POST",
+        "/v1/chat/completions",
+        Some(r#"{"messages":[{"role":"user","content":"再不处理我就威胁投诉到底 cancel"}]}"#),
+    );
+    assert_eq!(status, 200);
+    assert!(body.contains("转接人工客服"), "escalation reply: {body}");
+    assert!(body.contains("pagoda_triage"), "triage extension: {body}");
+    assert_eq!(received.lock().unwrap().len(), 1, "upstream must not be hit");
+
+    // 3. /generate is triaged too.
+    let (status, body) = http(
+        port,
+        "POST",
+        "/generate",
+        Some(r#"{"text":"我要 cancel 订阅并威胁拒付"}"#),
+    );
+    assert_eq!(status, 200);
+    assert!(body.contains("转接人工客服"), "generate escalation: {body}");
+    assert_eq!(received.lock().unwrap().len(), 1);
+
+    // 4. Stats expose the triage counters (3 triaged, 2 escalated).
+    let (status, body) = http(port, "GET", "/stats", None);
+    assert_eq!(status, 200);
+    let v = pagoda::json::parse(&body).expect("stats json");
+    assert_eq!(v.get("triaged_requests").and_then(|t| t.as_f64()), Some(3.0), "{body}");
+    assert_eq!(v.get("escalated_requests").and_then(|t| t.as_f64()), Some(2.0), "{body}");
+    assert_eq!(v.get("proxied_requests").and_then(|t| t.as_f64()), Some(1.0), "{body}");
+}

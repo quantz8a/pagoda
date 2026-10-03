@@ -44,7 +44,9 @@ fn print_usage() {
     println!("USAGE:");
     println!("  pagoda sample -p \"prompt\" [--max-tokens N] [--temperature F] [--repeat N]");
     println!("  pagoda program");
-    println!("  pagoda serve   [--port 8080] [--addr 127.0.0.1]");
+    println!("  pagoda serve   [--port 8080] [--addr 127.0.0.1] [--upstream http://host:port]");
+    println!("                 [--laya-url http://host:port] [--laya-shadow] [--laya-required]");
+    println!("                 [--churn-threshold 0.5] [--min-confidence 0.0]");
 }
 
 fn cfg() -> EngineConfig {
@@ -176,19 +178,69 @@ fn program() -> ExitCode {
 fn serve(args: &[String]) -> ExitCode {
     let mut port = 8000u16;
     let mut addr = "127.0.0.1".to_string();
+    let mut upstream: Option<String> = None;
+    let mut laya: Option<String> = None;
+    let mut laya_shadow = false;
+    let mut laya_required = false;
+    let mut churn_threshold = 0.5f64;
+    let mut min_confidence = 0.0f64;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--port" => port = it.next().and_then(|v| v.parse().ok()).unwrap_or(port),
             "--addr" => addr = it.next().cloned().unwrap_or(addr),
+            "--upstream" => upstream = it.next().cloned(),
+            "--laya-url" => laya = it.next().cloned(),
+            "--laya-shadow" => laya_shadow = true,
+            "--laya-required" => laya_required = true,
+            "--churn-threshold" => {
+                churn_threshold = it.next().and_then(|v| v.parse().ok()).unwrap_or(churn_threshold)
+            }
+            "--min-confidence" => {
+                min_confidence = it.next().and_then(|v| v.parse().ok()).unwrap_or(min_confidence)
+            }
             other => {
                 eprintln!("unknown flag: {other}");
                 return ExitCode::FAILURE;
             }
         }
     }
+    let proxy = match upstream.as_deref() {
+        Some(url) => match pagoda::server::Proxy::from_url(url) {
+            Some(p) => {
+                eprintln!("proxy mode: /generate + /v1/chat/completions -> {url}");
+                Some(Arc::new(p))
+            }
+            None => {
+                eprintln!("bad --upstream {url:?} (want http://host[:port])");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+    let triage = match laya.as_deref() {
+        Some(url) => match pagoda::triage::Triage::from_url(url) {
+            Some(mut t) => {
+                t.shadow = laya_shadow;
+                t.required = laya_required;
+                t.churn_threshold = churn_threshold;
+                t.min_confidence = min_confidence;
+                eprintln!(
+                    "triage: Laya at {url} (churn>{churn_threshold}, conf<{min_confidence}{}{})",
+                    if laya_shadow { ", shadow" } else { "" },
+                    if laya_required { ", fail-closed" } else { "" },
+                );
+                Some(Arc::new(t))
+            }
+            None => {
+                eprintln!("bad --laya-url {url:?} (want http://host[:port])");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
     let engine = Arc::new(Mutex::new(ToyEngine::toy(cfg())));
-    match pagoda::server::run(engine, &format!("{addr}:{port}")) {
+    match pagoda::server::run_with_triage(engine, &format!("{addr}:{port}"), proxy, triage) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("server error: {e}");
