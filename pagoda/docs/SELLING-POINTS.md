@@ -90,8 +90,8 @@ avg_forward_per_output_token / kv_utilization**——"省了多少算力"是一�
 ### 7. 与 SGLang 一键共部署（网关模式）
 
 `pagoda serve --upstream http://host:port` 一条命令变成 SGLang 的前厅网关：
-/generate 与 /v1/chat/completions 逐字节透传给 SGLang worker，/health /stats
-/checkpoint* 留在本地。一键脚本 `scripts/co-deploy.ps1|.sh` 连 SGLang 的
+/generate 与 /v1/chat/completions 逐字节透传给 SGLang worker（stream:true 时
+SSE 逐 chunk 中继，打字机零缓冲），/health /stats /checkpoint* 留在本地。一键脚本 `scripts/co-deploy.ps1|.sh` 连 SGLang 的
 venv 安装、健康等待、双进程拉起全包。
 
 为什么值钱：不与 SGLang 抢"大模型 GPU 吞吐"的主场，而是站在它前面补齐
@@ -154,6 +154,8 @@ SGLang 上的蒸馏学生正常生成，危险的**门口转人工、0 GPU、响
 - 安全工单照常生成，只多一次 Laya 前向的开销；
 - fail-open 演练：kill 掉 Laya 后请求照常转发，`/stats` 里
   `triage_unavailable` 计数 +1——分诊台倒了业务不停；
+- `--route dept=url` 按 Laya 判定的部门路由到专精上游（billing→账单学生），
+  未匹配的走默认；`/stats` 暴露 `routed_requests` 与路由表；
 - `--laya-shadow` 影子模式只记录不拦截，新分诊策略灰度上线零风险；
 - `/stats` 四计数器（triaged / escalated / unavailable / proxied）开箱可观测。
 
@@ -165,6 +167,8 @@ SGLang 上的蒸馏学生正常生成，危险的**门口转人工、0 GPU、响
 
 - 主 crate 跑的是确定性 n-gram 玩具模型：链路全真，算力是模拟的。
   真实权重对接点在 `pagoda-hf`（HF tokenizer + Candle），需联网编译。
+  Qwen2.5 蒸馏学生已纯 Rust 跑通 prefill+decode（e2e_qwen_student：85 token 干净停在
+  <|im_end|>，每个 token 只算一次）；吞吐仍是教学级，不做生产承诺。
 - KV 块里存的是 token id 而非张量：管理语义（分页/引用计数/COW）全真，
   数值计算不接 GPU。P2 起**会话内**是张量级 KV（candle），跨序列的张量共享
   （radix 命中前缀的 KV 嫁接）留待 P3。

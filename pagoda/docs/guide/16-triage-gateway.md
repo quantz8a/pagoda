@@ -50,6 +50,18 @@ POST /v1/chat/completions
 | `--min-confidence` | 0.0 | Laya 不自信 → 转人工（不自信也是一种危险） |
 | `--laya-shadow` | 关 | 影子模式：判定照做、日志照记、**永不拦截**（灰度上线用） |
 | `--laya-required` | 关 | 打开后 Laya 挂了返回 502（fail-closed），默认 fail-open |
+| `--route dept=url` | 无 | 可重复：Laya 判出的部门直接选上游，如 `--route billing=http://gpu-2:30001` |
+
+**部门路由**：配上 `--route` 后，分诊不只是"放行/转人工"——Laya 判出的
+部门（billing/shipping/technical/product/other）决定请求去**哪台**上游：
+账单工单给账单专精学生，技术工单给技术专精学生，没配专线的部门走默认
+`--upstream`。流式（SSE）和缓冲两条转发路径都按部门选路，
+`/stats` 里 `routed_requests` 和 `routes` 路由表可观测。
+
+**一个实测细节**：分诊的部门判定是概率不是圣旨。实测"你们营业时间几点"
+被 Laya 判成 billing，但概率分布是 billing 0.32 / other 0.26 的近乎抛硬币，
+confidence 只有 0.05——这种"拿不准"的请求应该配 `--min-confidence`
+（比如 0.3）：置信度不够就不信路由、升级处理，而不是盲目选线。
 
 ## 在 pagoda 里动手试试
 

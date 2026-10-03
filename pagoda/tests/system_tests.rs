@@ -485,3 +485,265 @@ fn http_triage_gateway_routes_and_escalates() {
     assert_eq!(v.get("escalated_requests").and_then(|t| t.as_f64()), Some(2.0), "{body}");
     assert_eq!(v.get("proxied_requests").and_then(|t| t.as_f64()), Some(1.0), "{body}");
 }
+
+/// Raw variant of http(): returns the whole response, framing included,
+/// so streaming tests can assert on Transfer-Encoding and chunk bytes.
+fn http_raw(port: u16, method: &str, path: &str, body: Option<&str>) -> String {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    let body = body.unwrap_or("");
+    let req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(req.as_bytes()).expect("write request");
+    let mut resp = String::new();
+    stream.read_to_string(&mut resp).expect("read response");
+    resp
+}
+
+/// A canned streaming upstream (stand-in for SGLang SSE): answers every
+/// request with three chunked data events, 20ms apart.
+fn mock_streaming_upstream(port: u16) {
+    let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind streaming upstream");
+    std::thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut stream) = conn else { continue };
+            std::thread::spawn(move || {
+                // Drain the request (headers + content-length body).
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            let text = String::from_utf8_lossy(&buf);
+                            if let Some(head_end) = text.find("\r\n\r\n") {
+                                let len: usize = text[..head_end]
+                                    .to_ascii_lowercase()
+                                    .split("\r\n")
+                                    .find_map(|h| h.strip_prefix("content-length:"))
+                                    .and_then(|v| v.trim().parse().ok())
+                                    .unwrap_or(0);
+                                if buf.len() >= head_end + 4 + len {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(head.as_bytes());
+                for ev in [
+                    "data: {\"text\":\"你\"}\n\n",
+                    "data: {\"text\":\"好\"}\n\n",
+                    "data: [DONE]\n\n",
+                ] {
+                    let framed = format!("{:x}\r\n{}\r\n", ev.len(), ev);
+                    let _ = stream.write_all(framed.as_bytes());
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                let _ = stream.write_all(b"0\r\n\r\n");
+            });
+        }
+    });
+}
+
+/// SSE passthrough: a stream:true request gets the upstream's events relayed
+/// chunk by chunk (framing intact, order preserved), a plain request to the
+/// same upstream is transparently de-chunked, and /stats counts both.
+#[test]
+fn http_proxy_streams_sse_verbatim_and_counts() {
+    let upstream_port = free_port();
+    mock_streaming_upstream(upstream_port);
+    wait_until_ready(upstream_port);
+
+    let engine = ToyEngine::toy(EngineConfig {
+        num_kv_blocks: 64,
+        block_size: 8,
+        ..EngineConfig::default()
+    });
+    let proxy = pagoda::server::Proxy::from_url(&format!("http://127.0.0.1:{upstream_port}"))
+        .expect("valid upstream url");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    std::thread::spawn(move || {
+        server::run_with_proxy(Arc::new(Mutex::new(engine)), &addr, Some(Arc::new(proxy)))
+            .expect("server run");
+    });
+    wait_until_ready(port);
+
+    // 1. stream:true: chunked SSE relayed with framing and order intact.
+    let raw = http_raw(
+        port,
+        "POST",
+        "/v1/chat/completions",
+        Some(r#"{"model":"x","stream":true,"messages":[{"role":"user","content":"hi"}]}"#),
+    );
+    assert!(raw.starts_with("HTTP/1.1 200 OK\r\n"), "raw: {raw:?}");
+    let lower = raw.to_ascii_lowercase();
+    assert!(lower.contains("transfer-encoding: chunked"), "raw: {raw:?}");
+    assert!(lower.contains("content-type: text/event-stream"), "raw: {raw:?}");
+    let first = raw.find("你").expect("event 1");
+    let second = raw.find("好").expect("event 2");
+    let done = raw.find("data: [DONE]").expect("done event");
+    assert!(first < second && second < done, "order broken: {raw:?}");
+    assert!(raw.ends_with("0\r\n\r\n"), "terminal chunk missing: {raw:?}");
+
+    // 2. stream absent: the buffered path transparently de-chunks.
+    let (status, body) = http(port, "POST", "/generate", Some(r#"{"text":"hi"}"#));
+    assert_eq!(status, 200);
+    assert!(body.contains("你") && body.contains("[DONE]"), "dechunked body: {body}");
+
+    // 3. Counters: two proxied, exactly one streamed.
+    let (status, stats) = http(port, "GET", "/stats", None);
+    assert_eq!(status, 200);
+    let v = pagoda::json::parse(&stats).expect("stats json");
+    assert_eq!(
+        v.get("proxied_requests").and_then(|t| t.as_f64()),
+        Some(2.0),
+        "stats: {stats}"
+    );
+    assert_eq!(
+        v.get("streamed_requests").and_then(|t| t.as_f64()),
+        Some(1.0),
+        "stats: {stats}"
+    );
+}
+
+/// A routing-aware Laya mock: the department answer follows the state text
+/// (发票/账单 → billing，报错/故障 → technical，其余 → other)，全程低风险不升级。
+fn mock_laya_routing(port: u16) {
+    let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind laya routing");
+    std::thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut stream) = conn else { continue };
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            let text = String::from_utf8_lossy(&buf);
+                            if let Some(head_end) = text.find("\r\n\r\n") {
+                                let len: usize = text[..head_end]
+                                    .to_ascii_lowercase()
+                                    .split("\r\n")
+                                    .find_map(|h| h.strip_prefix("content-length:"))
+                                    .and_then(|v| v.trim().parse().ok())
+                                    .unwrap_or(0);
+                                if buf.len() >= head_end + 4 + len {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                let text = String::from_utf8_lossy(&buf);
+                let state = text
+                    .split(r#""state":""#)
+                    .nth(1)
+                    .and_then(|rest| rest.split('"').next())
+                    .unwrap_or("");
+                let dept = if state.contains("发票") || state.contains("账单") {
+                    "billing"
+                } else if state.contains("报错") || state.contains("故障") {
+                    "technical"
+                } else {
+                    "other"
+                };
+                let resp = format!(
+                    r#"{{"model":"rl-agent","answers":{{"department":{{"type":"choice","choice":"{dept}","confidence":0.93}},"churn_risk":{{"type":"noul","noul":0.03}},"needs_human":{{"type":"noul","noul":0.02}}}},"usage":{{"input_tokens":64,"output_tokens":0}}}}"#
+                );
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    resp.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(resp.as_bytes());
+            });
+        }
+    });
+}
+
+/// Department routing: Laya's department pick steers the request to the
+/// dedicated --route upstream; unmatched departments fall to the default.
+#[test]
+fn http_triage_routes_by_department_to_dedicated_upstream() {
+    let laya_port = free_port();
+    mock_laya_routing(laya_port);
+    wait_until_ready(laya_port);
+
+    let default_port = free_port();
+    let received_default = Arc::new(Mutex::new(Vec::new()));
+    mock_upstream(default_port, Arc::clone(&received_default));
+    wait_until_ready(default_port);
+
+    let billing_port = free_port();
+    let received_billing = Arc::new(Mutex::new(Vec::new()));
+    mock_upstream(billing_port, Arc::clone(&received_billing));
+    wait_until_ready(billing_port);
+
+    let engine = ToyEngine::toy(EngineConfig::default());
+    let proxy = server::Proxy::with_routes(
+        &format!("http://127.0.0.1:{default_port}"),
+        &[("billing", &format!("http://127.0.0.1:{billing_port}"))],
+    )
+    .expect("proxy with routes");
+    let triage = pagoda::triage::Triage::from_url(&format!("http://127.0.0.1:{laya_port}")).unwrap();
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    std::thread::spawn(move || {
+        server::run_with_triage(
+            Arc::new(Mutex::new(engine)),
+            &addr,
+            Some(Arc::new(proxy)),
+            Some(Arc::new(triage)),
+        )
+        .expect("server run");
+    });
+    wait_until_ready(port);
+
+    // 1. Billing-ish request → the billing upstream, not the default.
+    let (status, _) = http(
+        port,
+        "POST",
+        "/v1/chat/completions",
+        Some(r#"{"messages":[{"role":"user","content":"我的发票金额算错了，请重新开具"}]}"#),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(received_billing.lock().unwrap().len(), 1, "billing must serve");
+    assert_eq!(received_default.lock().unwrap().len(), 0, "default must stay idle");
+
+    // 2. Unmatched department → default upstream.
+    let (status, _) = http(
+        port,
+        "POST",
+        "/v1/chat/completions",
+        Some(r#"{"messages":[{"role":"user","content":"你好，随便聊聊"}]}"#),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(received_default.lock().unwrap().len(), 1);
+    assert_eq!(received_billing.lock().unwrap().len(), 1);
+
+    // 3. /stats: both proxied, exactly one routed to a department upstream,
+    //    and the routing table is observable.
+    let (status, stats) = http(port, "GET", "/stats", None);
+    assert_eq!(status, 200);
+    let v = pagoda::json::parse(&stats).expect("stats json");
+    assert_eq!(
+        v.get("proxied_requests").and_then(|t| t.as_f64()),
+        Some(2.0),
+        "stats: {stats}"
+    );
+    assert_eq!(
+        v.get("routed_requests").and_then(|t| t.as_f64()),
+        Some(1.0),
+        "stats: {stats}"
+    );
+    assert!(
+        stats.contains(&format!("billing")), "routes visible: {stats}"
+    );
+}

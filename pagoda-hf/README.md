@@ -35,6 +35,19 @@ serving path: tokenizer roundtrip, finite vocab-sized logits, cold-miss /
 warm-hit prefix caching, greedy determinism across cache states, zero faults.
 See `../pagoda/docs/P1-VERIFICATION.md` for the full runbook.
 
+## Verify (P5): a real distilled student, pure Rust
+
+```powershell
+cargo run --release --example e2e_qwen_student -- /path/to/student-merged
+```
+
+Loads a Qwen2.5 LoRA-merged student (from ../distill) and runs a real
+customer-ticket prompt through prefill+decode on the pagoda engine.
+Verified 2026-10-03 on Qwen2.5-0.5B: stops cleanly at <|im_end|> (85 tokens,
+12.9s on a shared CPU, f32), feeds every token exactly once, and emits
+schema-complete ticket JSON — no Python in the loop. Qwen2 checkpoints need
+q/k/v bias, which the loader probes from the checkpoint itself.
+
 ## Usage
 
 ```rust

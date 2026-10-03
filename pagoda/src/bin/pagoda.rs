@@ -45,6 +45,7 @@ fn print_usage() {
     println!("  pagoda sample -p \"prompt\" [--max-tokens N] [--temperature F] [--repeat N]");
     println!("  pagoda program");
     println!("  pagoda serve   [--port 8080] [--addr 127.0.0.1] [--upstream http://host:port]");
+    println!("                 [--route dept=http://host:port]   (repeatable; Laya picks the upstream)");
     println!("                 [--laya-url http://host:port] [--laya-shadow] [--laya-required]");
     println!("                 [--churn-threshold 0.5] [--min-confidence 0.0]");
 }
@@ -184,6 +185,7 @@ fn serve(args: &[String]) -> ExitCode {
     let mut laya_required = false;
     let mut churn_threshold = 0.5f64;
     let mut min_confidence = 0.0f64;
+    let mut routes: Vec<(String, String)> = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -191,6 +193,18 @@ fn serve(args: &[String]) -> ExitCode {
             "--addr" => addr = it.next().cloned().unwrap_or(addr),
             "--upstream" => upstream = it.next().cloned(),
             "--laya-url" => laya = it.next().cloned(),
+            "--route" => {
+                let spec = it.next().cloned().unwrap_or_default();
+                match spec.split_once('=') {
+                    Some((dept, url)) if !dept.is_empty() && url.starts_with("http://") => {
+                        routes.push((dept.to_string(), url.to_string()))
+                    }
+                    _ => {
+                        eprintln!("bad --route {spec:?} (want dept=http://host[:port])");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
             "--laya-shadow" => laya_shadow = true,
             "--laya-required" => laya_required = true,
             "--churn-threshold" => {
@@ -206,16 +220,25 @@ fn serve(args: &[String]) -> ExitCode {
         }
     }
     let proxy = match upstream.as_deref() {
-        Some(url) => match pagoda::server::Proxy::from_url(url) {
-            Some(p) => {
-                eprintln!("proxy mode: /generate + /v1/chat/completions -> {url}");
-                Some(Arc::new(p))
+        Some(url) => {
+            let route_refs: Vec<(&str, &str)> = routes
+                .iter()
+                .map(|(d, u)| (d.as_str(), u.as_str()))
+                .collect();
+            match pagoda::server::Proxy::with_routes(url, &route_refs) {
+                Some(p) => {
+                    eprintln!("proxy mode: /generate + /v1/chat/completions -> {url}");
+                    for (dept, route_url) in &routes {
+                        eprintln!("route: {dept} -> {route_url}");
+                    }
+                    Some(Arc::new(p))
+                }
+                None => {
+                    eprintln!("bad --upstream {url:?} (want http://host[:port])");
+                    return ExitCode::FAILURE;
+                }
             }
-            None => {
-                eprintln!("bad --upstream {url:?} (want http://host[:port])");
-                return ExitCode::FAILURE;
-            }
-        },
+        }
         None => None,
     };
     let triage = match laya.as_deref() {

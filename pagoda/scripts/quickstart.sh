@@ -8,7 +8,7 @@ echo "==> [1/4] 构建（离线，零依赖）"
 cargo build --offline
 
 echo ""
-echo "==> [2/4] 运行测试套件（93 项）"
+echo "==> [2/4] 运行测试套件（96 项）"
 cargo test --offline
 
 echo ""

@@ -12,6 +12,11 @@
 //! additive causal mask). `examples/e2e_batched_decode.rs` asserts logits
 //! parity against candle's `Llama` on real weights.
 //!
+//! Qwen2-family checkpoints (Qwen2.5 students included) load through the same
+//! path: q/k/v bias is probed per checkpoint, tied embeddings and GQA are
+//! config-driven. `examples/e2e_qwen_student.rs` verifies a real distilled
+//! Qwen2.5 student end to end.
+//!
 //! Two entry points:
 //!
 //! * [`OwnedLlama::forward_tokens`] — single-sequence prefill / suffix feed
@@ -138,6 +143,14 @@ struct Attention {
     head_dim: usize,
 }
 
+/// Linear with an optional bias, probed from the checkpoint: Qwen2-family
+/// weights carry q/k/v bias, plain Llama does not — detect, don't configure.
+fn linear_maybe_bias(in_size: usize, out_size: usize, vb: VarBuilder) -> Result<Linear> {
+    let weight = vb.get((out_size, in_size), "weight")?;
+    let bias = vb.get(out_size, "bias").ok();
+    Ok(Linear::new(weight, bias))
+}
+
 #[derive(Debug, Clone)]
 struct Mlp {
     gate: Linear,
@@ -173,9 +186,9 @@ impl Attention {
         let size_in = config.hidden_size;
         let head_dim = config.hidden_size / config.num_attention_heads;
         Ok(Self {
-            q_proj: linear_no_bias(size_in, head_dim * config.num_attention_heads, vb.pp("q_proj"))?,
-            k_proj: linear_no_bias(size_in, head_dim * config.num_key_value_heads, vb.pp("k_proj"))?,
-            v_proj: linear_no_bias(size_in, head_dim * config.num_key_value_heads, vb.pp("v_proj"))?,
+            q_proj: linear_maybe_bias(size_in, head_dim * config.num_attention_heads, vb.pp("q_proj"))?,
+            k_proj: linear_maybe_bias(size_in, head_dim * config.num_key_value_heads, vb.pp("k_proj"))?,
+            v_proj: linear_maybe_bias(size_in, head_dim * config.num_key_value_heads, vb.pp("v_proj"))?,
             o_proj: linear_no_bias(head_dim * config.num_attention_heads, size_in, vb.pp("o_proj"))?,
             n_heads: config.num_attention_heads,
             n_kv_heads: config.num_key_value_heads,

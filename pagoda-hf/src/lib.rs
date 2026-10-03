@@ -101,13 +101,28 @@ impl HfTokenizer {
 
     fn finish(inner: tokenizers::Tokenizer) -> Result<Self> {
         let vocab = inner.get_vocab(true);
-        let eos = ["</s>", "<|endoftext|>", "<|eot_id|>", "<|end|>"]
-            .iter()
-            .find_map(|tok| vocab.get(*tok).copied())
+        // Special tokens win over regular BPE entries: Qwen's base vocab has
+        // literal "<s>"/"</s>" tokens (leftovers from its GPT-style BPE) that
+        // are NOT the real bos/eos — the chat terminators live in the added
+        // tokens (<|im_end|> etc.). Probe added tokens first; plain vocab is
+        // the fallback for exotic tokenizers.
+        let added: std::collections::HashMap<String, u32> = inner
+            .get_added_tokens_decoder()
+            .into_iter()
+            .map(|(id, tok)| (tok.content, id))
+            .collect();
+        let pick = |candidates: &[&str]| {
+            candidates
+                .iter()
+                .find_map(|tok| added.get(*tok).copied())
+                .or_else(|| candidates.iter().find_map(|tok| vocab.get(*tok).copied()))
+        };
+        let eos = pick(&["<|im_end|>", "<|eot_id|>", "</s>", "<|endoftext|>", "<|end|>"])
             .unwrap_or(0);
+        // A non-special token is never a bos (Qwen has none; do not prepend).
         let bos = ["<s>", "<|begin_of_text|>"]
             .iter()
-            .find_map(|tok| vocab.get(*tok).copied());
+            .find_map(|tok| added.get(*tok).copied());
         let vocab_size = inner.get_vocab_size(true);
         Ok(Self {
             inner,

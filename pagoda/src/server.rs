@@ -34,6 +34,19 @@ pub struct Proxy {
     url: String,
     /// Requests forwarded upstream so far.
     proxied: AtomicU64,
+    /// Of those, requests relayed as a live stream (SSE/chunked).
+    streamed: AtomicU64,
+    /// Of those, requests sent to a department-specific route (not default).
+    routed: AtomicU64,
+    /// Department-specific upstreams from --route dept=url (Laya routes).
+    routes: Vec<Route>,
+}
+
+/// One --route entry: a Laya department name and its dedicated upstream.
+struct Route {
+    dept: String,
+    url: String,
+    addr: String,
 }
 
 impl Proxy {
@@ -44,21 +57,139 @@ impl Proxy {
             addr,
             url: url.trim_end_matches('/').to_string(),
             proxied: AtomicU64::new(0),
+            streamed: AtomicU64::new(0),
+            routed: AtomicU64::new(0),
+            routes: Vec::new(),
         })
+    }
+
+    /// Build with department routes on top of the default upstream:
+    /// Laya's department pick decides which worker serves the request.
+    pub fn with_routes(url: &str, routes: &[(&str, &str)]) -> Option<Self> {
+        let mut proxy = Self::from_url(url)?;
+        for (dept, route_url) in routes {
+            let addr = http_client::parse_http_addr(route_url)?;
+            proxy.routes.push(Route {
+                dept: dept.to_string(),
+                url: route_url.trim_end_matches('/').to_string(),
+                addr,
+            });
+        }
+        Some(proxy)
     }
 
     pub fn url(&self) -> &str {
         &self.url
     }
 
+    /// Configured routes as "dept=url" pairs (surfaced in /stats).
+    pub fn route_urls(&self) -> Vec<(&str, &str)> {
+        self.routes
+            .iter()
+            .map(|r| (r.dept.as_str(), r.url.as_str()))
+            .collect()
+    }
+
     pub fn proxied_requests(&self) -> u64 {
         self.proxied.load(Ordering::Relaxed)
     }
 
+    pub fn streamed_requests(&self) -> u64 {
+        self.streamed.load(Ordering::Relaxed)
+    }
+
+    pub fn routed_requests(&self) -> u64 {
+        self.routed.load(Ordering::Relaxed)
+    }
+
+    /// Pick the upstream address for a Laya department; bool = matched a
+    /// department-specific route (vs. the default upstream).
+    fn pick(&self, dept: Option<&str>) -> (&str, bool) {
+        if let Some(d) = dept {
+            for route in &self.routes {
+                if route.dept == d {
+                    return (&route.addr, true);
+                }
+            }
+        }
+        (&self.addr, false)
+    }
+
+    /// Forward one request and relay the response as a live stream: upstream
+    /// chunks are written to the client socket as they arrive (SSE
+    /// passthrough). A non-streaming upstream transparently falls back to the
+    /// buffered path; an unreachable one degrades to 502.
+    pub fn forward_streaming(
+        &self,
+        client: &mut TcpStream,
+        method: &str,
+        path: &str,
+        body: &str,
+        dept: Option<&str>,
+    ) -> std::io::Result<()> {
+        let (addr, matched) = self.pick(dept);
+        if matched {
+            self.routed.fetch_add(1, Ordering::Relaxed);
+        }
+        let up = http_client::request_open(
+            addr,
+            method,
+            path,
+            Some(body),
+            http_client::DEFAULT_TIMEOUT,
+        );
+        let mut up = match up {
+            Ok(up) => up,
+            Err(e) => {
+                return write_http_response(
+                    client,
+                    &HttpResponse::json(
+                        502,
+                        &format!(
+                            r#"{{"error":"upstream_unreachable","upstream":"{}","detail":"{e}"}}"#,
+                            self.url
+                        ),
+                    ),
+                );
+            }
+        };
+        self.proxied.fetch_add(1, Ordering::Relaxed);
+        if !up.chunked {
+            let mut buf = Vec::new();
+            while let Some(payload) = up.next_payload()? {
+                buf.extend_from_slice(&payload);
+            }
+            let resp = HttpResponse {
+                status: up.status,
+                body: String::from_utf8_lossy(&buf).into_owned(),
+            };
+            return write_http_response(client, &resp);
+        }
+        self.streamed.fetch_add(1, Ordering::Relaxed);
+        let content_type = up.content_type.as_deref().unwrap_or("text/event-stream");
+        let head = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+            up.status,
+            reason_phrase(up.status),
+            content_type
+        );
+        client.write_all(head.as_bytes())?;
+        while let Some(payload) = up.next_payload()? {
+            client.write_all(format!("{:x}\r\n", payload.len()).as_bytes())?;
+            client.write_all(&payload)?;
+            client.write_all(b"\r\n")?;
+        }
+        client.write_all(b"0\r\n\r\n")
+    }
+
     /// Forward one JSON request verbatim; passthrough (status, body).
     /// Upstream failures degrade to a 502 instead of poisoning the server.
-    fn forward(&self, method: &str, path: &str, body: Option<&str>) -> HttpResponse {
-        match http_client::request(&self.addr, method, path, body, http_client::DEFAULT_TIMEOUT) {
+    fn forward(&self, method: &str, path: &str, body: Option<&str>, dept: Option<&str>) -> HttpResponse {
+        let (addr, matched) = self.pick(dept);
+        if matched {
+            self.routed.fetch_add(1, Ordering::Relaxed);
+        }
+        match http_client::request(addr, method, path, body, http_client::DEFAULT_TIMEOUT) {
             Ok((status, body)) => {
                 self.proxied.fetch_add(1, Ordering::Relaxed);
                 HttpResponse { status, body }
@@ -155,6 +286,40 @@ pub fn handle<E: ServingEngine>(
     handle_with_proxy(engine, None, method, path, body)
 }
 
+/// The endpoints that forward to the upstream worker in proxy mode.
+fn is_generation_endpoint(method: &str, path: &str) -> bool {
+    method == "POST" && (path == "/generate" || path == "/v1/chat/completions")
+}
+
+/// Does this request body ask for server-sent events (a stream:true field)?
+fn wants_stream(body: Option<&str>) -> bool {
+    body.and_then(|b| json::parse(b).ok())
+        .and_then(|v| v.get("stream").and_then(Value::as_bool))
+        .unwrap_or(false)
+}
+
+/// Laya gate shared by the buffered and streaming paths. Returns the
+/// decided department (for --route upstream selection) plus, when the
+/// request must not pass, the human-handoff reply to short-circuit with.
+fn triage_decide(
+    triage: Option<&crate::triage::Triage>,
+    path: &str,
+    body: Option<&str>,
+) -> (Option<String>, Option<HttpResponse>) {
+    let Some(t) = triage else {
+        return (None, None);
+    };
+    let Some(text) = body.and_then(|b| extract_user_text(path, b)) else {
+        return (None, None);
+    };
+    let out = t.check(&text);
+    if out.escalate && !t.shadow {
+        (None, Some(HttpResponse::json(200, &t.escalation_body(&out))))
+    } else {
+        (Some(out.department), None)
+    }
+}
+
 /// Like [`handle`], but with an optional upstream [`Proxy`]: generation
 /// endpoints (`/generate`, `/v1/chat/completions`) forward verbatim to the
 /// upstream worker; the control plane stays local.
@@ -204,16 +369,12 @@ pub fn handle_with_triage<E: ServingEngine>(
     if let Some(proxy) = proxy {
         // Heavy generation goes to the upstream worker. Everything else
         // (health, stats, checkpoints) is pagoda-local control plane.
-        if method == "POST" && (path == "/generate" || path == "/v1/chat/completions") {
-            if let Some(t) = triage {
-                if let Some(text) = body.and_then(|b| extract_user_text(path, b)) {
-                    let out = t.check(&text);
-                    if out.escalate && !t.shadow {
-                        return HttpResponse::json(200, &t.escalation_body(&out));
-                    }
-                }
+        if is_generation_endpoint(method, path) {
+            let (dept, escalation) = triage_decide(triage, path, body);
+            if let Some(escalation) = escalation {
+                return escalation;
             }
-            return proxy.forward(method, path, body);
+            return proxy.forward(method, path, body, dept.as_deref());
         }
     }
     match (method, path) {
@@ -292,6 +453,27 @@ pub fn handle_with_triage<E: ServingEngine>(
                     "proxied_requests".to_string(),
                     Value::Number(proxy.proxied_requests() as f64),
                 ));
+                fields.push((
+                    "streamed_requests".to_string(),
+                    Value::Number(proxy.streamed_requests() as f64),
+                ));
+                fields.push((
+                    "routed_requests".to_string(),
+                    Value::Number(proxy.routed_requests() as f64),
+                ));
+                let routes: Vec<Value> = proxy
+                    .route_urls()
+                    .into_iter()
+                    .map(|(dept, url)| {
+                        Value::Object(vec![
+                            ("department".to_string(), Value::String(dept.to_string())),
+                            ("upstream".to_string(), Value::String(url.to_string())),
+                        ])
+                    })
+                    .collect();
+                if !routes.is_empty() {
+                    fields.push(("routes".to_string(), Value::Array(routes)));
+                }
             }
             if let Some(t) = triage {
                 fields.push((
@@ -566,6 +748,42 @@ fn chat_response(out: &GenerationOutput) -> Value {
 }
 
 /// Read one HTTP/1.1 request from a connection. Public so companion crates
+/// Connection-level handler: same routing as the buffered handler, but a
+/// proxied request with stream:true relays the upstream SSE stream
+/// chunk-by-chunk onto the client socket instead of buffering. The engine
+/// lock is only taken for the local control plane, so long-lived streams
+/// never block /stats or /health.
+pub fn handle_conn<E: ServingEngine>(
+    engine: &std::sync::Mutex<E>,
+    proxy: Option<&Proxy>,
+    triage: Option<&crate::triage::Triage>,
+    method: &str,
+    path: &str,
+    body: &str,
+    stream: &mut TcpStream,
+) -> std::io::Result<()> {
+    if let Some(p) = proxy {
+        if is_generation_endpoint(method, path) {
+            let (dept, escalation) = triage_decide(triage, path, Some(body));
+            if let Some(escalation) = escalation {
+                return write_http_response(stream, &escalation);
+            }
+            if wants_stream(Some(body)) {
+                return p.forward_streaming(stream, method, path, body, dept.as_deref());
+            }
+            return write_http_response(
+                stream,
+                &p.forward(method, path, Some(body), dept.as_deref()),
+            );
+        }
+    }
+    let resp = {
+        let mut guard = engine.lock().unwrap();
+        handle_with_triage(&mut *guard, proxy, triage, method, path, Some(body))
+    };
+    write_http_response(stream, &resp)
+}
+
 /// (e.g. pagoda-hf's Laya server) can reuse the same tiny wire protocol.
 pub fn read_http_request(stream: &mut TcpStream) -> std::io::Result<(String, String, String)> {
     let mut reader = BufReader::new(stream);
@@ -595,14 +813,20 @@ pub fn read_http_request(stream: &mut TcpStream) -> std::io::Result<(String, Str
     Ok((method, path, String::from_utf8_lossy(&body).into_owned()))
 }
 
-/// Write one HTTP/1.1 response (JSON content type, connection close).
-pub fn write_http_response(stream: &mut TcpStream, resp: &HttpResponse) -> std::io::Result<()> {
-    let reason = match resp.status {
+/// Status-line reason phrase for the codes pagoda emits or relays.
+fn reason_phrase(status: u16) -> &'static str {
+    match status {
         200 => "OK",
         400 => "Bad Request",
         404 => "Not Found",
+        502 => "Bad Gateway",
         _ => "Internal Server Error",
-    };
+    }
+}
+
+/// Write one HTTP/1.1 response (JSON content type, connection close).
+pub fn write_http_response(stream: &mut TcpStream, resp: &HttpResponse) -> std::io::Result<()> {
+    let reason = reason_phrase(resp.status);
     let head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         resp.status,
@@ -676,18 +900,15 @@ where
                             return;
                         }
                     };
-                    let response = {
-                        let mut guard = engine.lock().unwrap();
-                        handle_with_triage(
-                            &mut *guard,
-                            proxy.as_deref(),
-                            triage.as_deref(),
-                            &method,
-                            &path,
-                            Some(&body),
-                        )
-                    };
-                    let _ = write_http_response(&mut stream, &response);
+                    let _ = handle_conn(
+                        &engine,
+                        proxy.as_deref(),
+                        triage.as_deref(),
+                        &method,
+                        &path,
+                        &body,
+                        &mut stream,
+                    );
                 });
             }
             Err(e) => eprintln!("accept error: {e}"),
