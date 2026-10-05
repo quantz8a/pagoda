@@ -1,0 +1,122 @@
+<section style="max-width:677px;margin:0 auto;padding:6px 4px;
+font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC',
+'Hiragino Sans GB','Microsoft YaHei',sans-serif;">
+<blockquote style="background:#F6F7FB;border-left:3px solid #C98A1B;margin:16px 0;padding:12px 14px;border-radius:0 8px 8px 0;"><p style="font-size:14.5px;color:#6A7382;line-height:1.75;margin:0;">Rust 重写的 Laya · 一张 RTX 3050 · 一次系统综述初筛的全流程实录</p>
+</blockquote>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;"><img alt="题图" src="images/fig0-hero.png" style="width:100%;border-radius:10px;margin:10px 0 2px;display:block;"/></p>
+<h2 style="font-size:18px;font-weight:700;color:#2B3452;margin:34px 0 6px;padding-left:10px;border-left:4px solid #4F6BD8;line-height:1.4;">一、系统综述里最熬人的一步</h2>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">做过 Meta 分析的朋友都知道，PRISMA 流程里最耗人的不是统计，而是<strong style="color:#2B3452;font-weight:700;">初筛</strong>：</p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">检索式往 PubMed 里一扔，哗啦啦回来几千篇摘要。方法学要求<strong style="color:#2B3452;font-weight:700;">两个人独立筛选</strong>，一篇一篇点"纳入 / 排除"，意见不一致的还要拉第三个人仲裁。按一篇摘要 30 秒算，3000 篇就是两个人各 25 个小时——盯着标题摘要看到眼瞎的 25 个小时。</p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">这个环节偏偏还最不能出错：漏纳一篇合格文献，整个综述的结论都可能被审稿人推翻。</p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">那能不能让大模型来读？能，但直接上 GPT/Claude 有三个现实问题：</p>
+<ul style="padding-left:1.5em;margin:12px 0;">
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">贵</strong>：每篇摘要连提示词几千 token，几千篇就是一笔不小的 API 账单；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">不稳</strong>：自由文本输出，格式飘、难校验，凌晨三点跑批时它给你来一句"作为一个 AI 我不好判断"；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">出不了内网</strong>：医院、药厂的数据，根本不允许出门。</li>
+</ul>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">我们想要的其实是一个<strong style="color:#2B3452;font-weight:700;">只做判断题、不说废话的小模型</strong>。最近我们把它折腾出来了——而且是纯 Rust 版。</p>
+<h2 style="font-size:18px;font-weight:700;color:#2B3452;margin:34px 0 6px;padding-left:10px;border-left:4px solid #4F6BD8;line-height:1.4;">二、Laya：不聊天的模型</h2>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;"><a style="color:#4F6BD8;text-decoration:none;" href="https://huggingface.co/convaiinnovations/laya">Laya</a> 是 Convo AI 开源的一个 0.4B"决策模型"。它不走"生成一段文字"那条路，而是把决策建模成<strong style="color:#2B3452;font-weight:700;">一组带类型的提问</strong>：</p>
+<pre style="background:#282C34;border-radius:10px;padding:16px 14px;margin:18px 0;overflow-x:auto;line-height:1.65;"><code style="background:transparent;color:#ABB2BF;padding:0;font-family:Consolas,Menlo,monospace;font-size:13px;">{
+  &quot;state&quot;: &quot;Title: Aerobic exercise training and glycemic control...&quot;,
+  &quot;questions&quot;: {
+    &quot;include&quot;: { &quot;type&quot;: &quot;noul&quot;,
+      &quot;instructions&quot;: &quot;该研究是否为符合 PICO 的随机对照试验……&quot; },
+    &quot;design&quot;:  { &quot;type&quot;: &quot;choice&quot;,
+      &quot;instructions&quot;: &quot;这项研究的设计类型是？&quot;,
+      &quot;criteria&quot;: { &quot;rct&quot;: &quot;随机对照试验&quot;, &quot;cohort&quot;: &quot;观察性队列&quot;, &quot;…&quot;: &quot;…&quot; } }
+  }
+}
+</code></pre>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">一次 <code style="background:#F3F4F8;color:#C2185B;padding:2px 5px;border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13.5px;">/decide</code> 调用，返回每个问题的<strong style="color:#2B3452;font-weight:700;">选项概率分布 + 置信度</strong>：</p>
+<pre style="background:#282C34;border-radius:10px;padding:16px 14px;margin:18px 0;overflow-x:auto;line-height:1.65;"><code style="background:transparent;color:#ABB2BF;padding:0;font-family:Consolas,Menlo,monospace;font-size:13px;">{ &quot;answers&quot;: {
+    &quot;include&quot;: { &quot;noul&quot;: 0.94,  &quot;confidence&quot;: 0.91 },
+    &quot;design&quot;:  { &quot;choice&quot;: &quot;rct&quot;, &quot;confidence&quot;: 0.88 } } }
+</code></pre>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;"><code style="background:#F3F4F8;color:#C2185B;padding:2px 5px;border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13.5px;">noul: 0.94</code> 读作"P(该研究符合纳入标准) = 0.94"——判定用阈值，仲裁用置信度，
+低置信的篇目自动转人工，正好对上方法学里"分歧仲裁"那一环。</p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">没有废话，没有格式漂移，概率可以直接进下游流水线。<strong style="color:#2B3452;font-weight:700;">不生成一个字，自然也没有 prefill/decode 的成本结构</strong>——一次前向，两道题，完事。</p>
+<h2 style="font-size:18px;font-weight:700;color:#2B3452;margin:34px 0 6px;padding-left:10px;border-left:4px solid #4F6BD8;line-height:1.4;">三、为什么用 Rust 重写它</h2>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">原版 Laya 是 Python 的：PyTorch + transformers，轻装上阵也要一个 5.3 GB 的虚拟环境。我们做 <a style="color:#4F6BD8;text-decoration:none;" href="https://github.com/quantz8a/pagoda">pagoda</a> 的初衷，是把 SGLang 那套服务化思想（radix 前缀缓存、结构化约束、持续批处理）用 Rust 重新实现一遍——Laya 顺手成了第一个"全家桶住户"。</p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">同一张 RTX 3050 上的实测：</p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;"><img alt="Rust vs Python" src="images/fig2-perf.png" style="width:100%;border-radius:10px;margin:10px 0 2px;display:block;"/><p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;" style="font-size:12.5px;color:#8A8F98;text-align:center;margin:2px 0 18px;letter-spacing:0.3px;">Rust vs Python</p></p>
+<ul style="padding-left:1.5em;margin:12px 0;">
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">部署体积 17.9 MB 单二进制 vs 5.3 GB venv</strong>（约 1/300），<code style="background:#F3F4F8;color:#C2185B;padding:2px 5px;border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13.5px;">scp</code> 过去就跑；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">冷启动 1.4–1.6 s vs 7.9–9.4 s</strong>——批处理脚本每分钟重启都不心疼；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">单请求 606 ms vs 691 ms</strong>——Rust 这边还是 f32 精度（Python 版用的是 fp16），精度吃亏依然快 12%；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">峰值显存 1850 MB vs 2954 MB</strong>，省 37%，给别的模型腾地方。</li>
+</ul>
+<h2 style="font-size:18px;font-weight:700;color:#2B3452;margin:34px 0 6px;padding-left:10px;border-left:4px solid #4F6BD8;line-height:1.4;">四、零样本的它，还差点火候</h2>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">直接上岗之前，我们构造了一个真实任务当"入职考试"：</p>
+<blockquote style="background:#F6F7FB;border-left:3px solid #C98A1B;margin:16px 0;padding:12px 14px;border-radius:0 8px 8px 0;"><p style="font-size:14.5px;color:#6A7382;line-height:1.75;margin:0;"><strong style="color:#2B3452;font-weight:700;">PICO</strong>：成人 2 型糖尿病；结构化运动 vs 常规护理；结局指标 HbA1c；只纳入 RCT。</p>
+</blockquote>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">40 篇摘要当考题——14 篇标准 RCT（该收）、14 篇明显不相关（该拒），还有 <strong style="color:#2B3452;font-weight:700;">12 篇是刻意埋的"边界案例"</strong>：混合了 1 型/2 型人群的、quasi-random 的、只发了会议摘要的、post-hoc 亚组分析的……这些正是真人筛选员也会吵起来的那类。</p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">零样本的原版 Laya 成绩：<strong style="color:#2B3452;font-weight:700;">纳入判定 67.5%，边界案例只有 50%</strong>——难的篇目约等于抛硬币，达不到"替人干活"的标准。（研究设计分类倒是不错，85%。）</p>
+<h2 style="font-size:18px;font-weight:700;color:#2B3452;margin:34px 0 6px;padding-left:10px;border-left:4px solid #4F6BD8;line-height:1.4;">五、半小时的入职培训：LoRA + 温度重标定</h2>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">训练方案有意做得非常"轻"：</p>
+<ul style="padding-left:1.5em;margin:12px 0;">
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">LoRA 只挂编码器的注意力/MLP</strong>：7.2M 参数，占全模型 1.8%；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">决策头全量训练</strong>：26.2M 参数——它才是"判断"发生的地方；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;">两道题联合训练：纳入判定（noul）+ 研究设计五分类（choice）；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;">全程在<strong style="color:#2B3452;font-weight:700;">一张和别人共享的 RTX 3050</strong> 上，batch=2、梯度检查点，显存占用 4 GB 出头。</li>
+</ul>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;"><img alt="筛选流水线" src="images/fig1-pipeline.png" style="width:100%;border-radius:10px;margin:10px 0 2px;display:block;"/><p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;" style="font-size:12.5px;color:#8A8F98;text-align:center;margin:2px 0 18px;letter-spacing:0.3px;">筛选流水线</p></p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">训练之后还有一个关键小动作：<strong style="color:#2B3452;font-weight:700;">温度重标定</strong>。Laya 输出的是概率，但"概率"不等于"靠谱程度"——神经网络出了名的自我感觉良好。我们在留出集上做网格搜索，给每类问题找最优温度系数，让"置信度 0.9"尽量真的意味着十次对九次。本例中标定把校准误差（ECE）从 0.154 压到 <strong style="color:#2B3452;font-weight:700;">0.117</strong>——幅度不算惊人，但这个动作的意义在于：<strong style="color:#2B3452;font-weight:700;">流水线里每一环节的置信度，从此是可以拿来当阈值用的真概率</strong>。</p>
+<h2 style="font-size:18px;font-weight:700;color:#2B3452;margin:34px 0 6px;padding-left:10px;border-left:4px solid #4F6BD8;line-height:1.4;">六、成绩单</h2>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;"><img alt="准确率对比" src="images/fig3-accuracy.png" style="width:100%;border-radius:10px;margin:10px 0 2px;display:block;"/><p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;" style="font-size:12.5px;color:#8A8F98;text-align:center;margin:2px 0 18px;letter-spacing:0.3px;">准确率对比</p></p>
+<table style="width:100%;border-collapse:collapse;margin:18px 0;font-size:13.5px;">
+<thead>
+<tr>
+<th style="background:#EEF1F8;color:#2B3452;font-weight:700;padding:9px 8px;border:1px solid #E2E6EF;text-align:left;">指标</th>
+<th style="background:#EEF1F8;color:#2B3452;font-weight:700;padding:9px 8px;border:1px solid #E2E6EF;text-align:left;">原版零样本</th>
+<th style="background:#EEF1F8;color:#2B3452;font-weight:700;padding:9px 8px;border:1px solid #E2E6EF;text-align:left;">微调 + 标定后</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;">纳入判定（40 篇）</td>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;">67.5%</td>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;"><strong style="color:#2B3452;font-weight:700;">97.5%</strong></td>
+</tr>
+<tr>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;">边界案例（12 篇）</td>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;">50.0%</td>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;"><strong style="color:#2B3452;font-weight:700;">100%</strong></td>
+</tr>
+<tr>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;">研究设计分类</td>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;">85.0%</td>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;"><strong style="color:#2B3452;font-weight:700;">100%</strong></td>
+</tr>
+<tr>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;">校准误差 ECE（留出集）</td>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;">0.126</td>
+<td style="padding:9px 8px;border:1px solid #E9ECF2;color:#3f3f3f;"><strong style="color:#2B3452;font-weight:700;">0.117</strong></td>
+</tr>
+</tbody>
+</table>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">（诚实声明：40 篇中 34 篇参与过训练，这是"能否学会这套筛选标准"的能力验证；6 篇完全未见的留出集上趋势一致：边界案例 67%→100%，设计分类 83%→100%。）</p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">训练耗时 <strong style="color:#2B3452;font-weight:700;">27 分钟</strong>。换句话说：<strong style="color:#2B3452;font-weight:700;">一顿午饭的时间，把一个通用决策模型培训成了你这个课题的专科筛选员</strong>——而且培训完直接导出成 Rust 单文件能加载的检查点（843 MB，含 tokenizer 与标定好的温度表），<code style="background:#F3F4F8;color:#C2185B;padding:2px 5px;border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13.5px;">--model-dir</code> 指过去就上线。</p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;"><img alt="筛选漏斗" src="images/fig4-funnel.png" style="width:100%;border-radius:10px;margin:10px 0 2px;display:block;"/><p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;" style="font-size:12.5px;color:#8A8F98;text-align:center;margin:2px 0 18px;letter-spacing:0.3px;">筛选漏斗</p></p>
+<h2 style="font-size:18px;font-weight:700;color:#2B3452;margin:34px 0 6px;padding-left:10px;border-left:4px solid #4F6BD8;line-height:1.4;">七、全景：一座跑在游戏本上的"文献工厂"</h2>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">初筛只是第一道工序。完整的流水线长这样：</p>
+<ol style="padding-left:1.5em;margin:12px 0;">
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">Laya 初筛</strong>（Rust 单文件，CPU 即可）：每篇摘要两道题（纳入？设计？），40 篇全程 157 秒；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">pagoda 网关</strong>：通过初筛的 19 篇转发给下游做结构化抽取，全程分诊、路由、记账（<code style="background:#F3F4F8;color:#C2185B;padding:2px 5px;border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13.5px;">/stats</code> 里清清楚楚：61 次转发、2 次按科室路由）；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><strong style="color:#2B3452;font-weight:700;">SGLang 学生模型</strong>（我们之前用蒸馏流水线训出的 1.5B 小模型）：逐篇抽取样本量、干预类型、HbA1c 变化，<strong style="color:#2B3452;font-weight:700;">19/19 输出合法 JSON</strong>；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;">一个诚实的观察：这批请求平均 11.5 秒里大头在 decode（每篇生成约 53 token），334 token 的 PICO 共享前缀就算被 radix 缓存完全命中，省下的 prefill 也只是零头——<strong style="color:#2B3452;font-weight:700;">前缀复用的红利属于"长提示、短输出"的负载，这次我们不是</strong>。</li>
+</ol>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">还有个计划外的实战彩蛋：压测期间网关有 36 次调不通 Laya（CPU 被筛选流量打满），网关按设计 <strong style="color:#2B3452;font-weight:700;">fail-open</strong> 放行并在 <code style="background:#F3F4F8;color:#C2185B;padding:2px 5px;border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13.5px;">/stats</code> 记账——一次故障演练都没专门做，生产细节自己冒出来了。</p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">一个值得一提的细节：系统综述要求"双人独立筛选 + 分歧仲裁"。在我们的实现里，这被翻译成——<strong style="color:#2B3452;font-weight:700;">同一份权重，checkpoint 分叉出两个评审</strong>（不同 LoRA / 不同温度），分歧的篇目自动路由给人工。方法学要求一字不改，成本从一整个人力变成一次前向。</p>
+<h2 style="font-size:18px;font-weight:700;color:#2B3452;margin:34px 0 6px;padding-left:10px;border-left:4px solid #4F6BD8;line-height:1.4;">八、收尾</h2>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">整套东西都在 GitHub 上：<strong style="color:#2B3452;font-weight:700;"><a style="color:#4F6BD8;text-decoration:none;" href="https://github.com/quantz8a/pagoda">github.com/quantz8a/pagoda</a></strong></p>
+<ul style="padding-left:1.5em;margin:12px 0;">
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><code style="background:#F3F4F8;color:#C2185B;padding:2px 5px;border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13.5px;">pagoda-hf/</code>：Laya 的 Rust 推理 + 本文的筛选服务；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><code style="background:#F3F4F8;color:#C2185B;padding:2px 5px;border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13.5px;">distill/train_laya.py</code>：30 分钟微调脚本（含温度重标定），换一批种子摘要就是你的课题；</li>
+<li style="font-size:15.5px;color:#3f3f3f;line-height:1.8;letter-spacing:0.3px;margin:6px 0;"><code style="background:#F3F4F8;color:#C2185B;padding:2px 5px;border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:13.5px;">docs/guide/</code>：从零开始的小白文档，一共 17 篇。</li>
+</ul>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">许可证是 Apache-2.0：随便用、随便改、可商用，唯一的要求是<strong style="color:#2B3452;font-weight:700;">保留版权声明</strong>（NOTICE 文件里有完整的出处链）。我们的想法很简单：基础设施的价值在于被采用，而不是被锁起来。</p>
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;">下一篇我们聊聊：当初筛规模从 40 篇变成 4000 篇，radix 缓存和持续批处理能把账单压到多低。</p>
+<hr style="border:none;border-top:1px solid #E5E7EB;margin:28px 0;" />
+<p style="font-size:15.5px;color:#3f3f3f;line-height:1.85;letter-spacing:0.3px;margin:14px 0;text-align:justify;"><em style="color:#5a6272;">本文所有数字均来自 RTX 3050（8GB）上的真实测量，脚本与原始数据见仓库。</em></p>
+</section>

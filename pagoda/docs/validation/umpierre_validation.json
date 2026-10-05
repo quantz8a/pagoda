@@ -1,0 +1,4773 @@
+{
+ "review": "Umpierre 2011 JAMA (PMID 21540423)",
+ "pool_size": 1975,
+ "n_eval": 279,
+ "n_pos": 34,
+ "n_neg": 245,
+ "missing_abstracts": 5,
+ "base": {
+  "tp": 32,
+  "fn": 2,
+  "tn": 68,
+  "fp": 177,
+  "sensitivity": 0.9412,
+  "specificity": 0.2776,
+  "accuracy": 0.3584,
+  "ppv": 0.1531
+ },
+ "tuned": {
+  "tp": 16,
+  "fn": 18,
+  "tn": 218,
+  "fp": 27,
+  "sensitivity": 0.4706,
+  "specificity": 0.8898,
+  "accuracy": 0.8387,
+  "ppv": 0.3721
+ },
+ "rows": [
+  {
+   "pmid": "12351469",
+   "gold": 1,
+   "title": "High-intensity resistance training improves glycemic control in older patients with type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.9157,
+    "design": "rct",
+    "ms": 6109
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.9261,
+    "design": "rct",
+    "ms": 6228
+   }
+  },
+  {
+   "pmid": "12453982",
+   "gold": 1,
+   "title": "A randomized controlled trial of resistance exercise training to improve glycemic control in older adults with type 2 di",
+   "base": {
+    "include": true,
+    "p": 0.928,
+    "design": "rct",
+    "ms": 6246
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1067,
+    "design": "rct",
+    "ms": 6252
+   }
+  },
+  {
+   "pmid": "12502654",
+   "gold": 1,
+   "title": "Randomized controlled community-based nutrition and exercise intervention improves glycemia and cardiovascular risk fact",
+   "base": {
+    "include": true,
+    "p": 0.8691,
+    "design": "rct",
+    "ms": 5886
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.7877,
+    "design": "rct",
+    "ms": 7216
+   }
+  },
+  {
+   "pmid": "12547870",
+   "gold": 1,
+   "title": "Validation of a counseling strategy to promote the adoption and the maintenance of physical activity by type 2 diabetic ",
+   "base": {
+    "include": true,
+    "p": 0.9111,
+    "design": "rct",
+    "ms": 6483
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.9132,
+    "design": "rct",
+    "ms": 5594
+   }
+  },
+  {
+   "pmid": "12663595",
+   "gold": 1,
+   "title": "Increasing physical activity in people with type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.9436,
+    "design": "rct",
+    "ms": 5706
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0178,
+    "design": "rct",
+    "ms": 5708
+   }
+  },
+  {
+   "pmid": "12829654",
+   "gold": 1,
+   "title": "Exercise training improves baroreflex sensitivity in type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.8729,
+    "design": "rct",
+    "ms": 7688
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.2914,
+    "design": "rct",
+    "ms": 7529
+   }
+  },
+  {
+   "pmid": "14569279",
+   "gold": 1,
+   "title": "Controlled outcome evaluation of the First Step Program: a daily physical activity intervention for individuals with typ",
+   "base": {
+    "include": true,
+    "p": 0.8683,
+    "design": "rct",
+    "ms": 6212
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.6128,
+    "design": "rct",
+    "ms": 7380
+   }
+  },
+  {
+   "pmid": "15152108",
+   "gold": 1,
+   "title": "Effect of exercise versus relaxation on haemoglobin A1C in Black females with type 2 diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.7993,
+    "design": "rct",
+    "ms": 7762
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.8641,
+    "design": "rct",
+    "ms": 6516
+   }
+  },
+  {
+   "pmid": "1516762",
+   "gold": 1,
+   "title": "Habitual physical activity, aerobic capacity and metabolic control in patients with newly-diagnosed type 2 (non-insulin-",
+   "base": {
+    "include": true,
+    "p": 0.809,
+    "design": "rct",
+    "ms": 5931
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0685,
+    "design": "rct",
+    "ms": 5921
+   }
+  },
+  {
+   "pmid": "15451743",
+   "gold": 1,
+   "title": "Pounds off with empowerment (POWER): a clinical trial of weight management strategies for black and white adults with di",
+   "base": {
+    "include": true,
+    "p": 0.8681,
+    "design": "rct",
+    "ms": 4476
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.556,
+    "design": "rct",
+    "ms": 4528
+   }
+  },
+  {
+   "pmid": "15717881",
+   "gold": 1,
+   "title": "An intensified lifestyle intervention programme may be superior to insulin treatment in poorly controlled Type 2 diabeti",
+   "base": {
+    "include": true,
+    "p": 0.8717,
+    "design": "rct",
+    "ms": 7317
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.8296,
+    "design": "rct",
+    "ms": 7323
+   }
+  },
+  {
+   "pmid": "16219018",
+   "gold": 1,
+   "title": "Relationship between pedometer-registered activity, aerobic capacity and self-reported activity and fitness in patients ",
+   "base": {
+    "include": true,
+    "p": 0.9052,
+    "design": "rct",
+    "ms": 7362
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.9225,
+    "design": "rct",
+    "ms": 7301
+   }
+  },
+  {
+   "pmid": "16256242",
+   "gold": 1,
+   "title": "Impact of modified glucose target and exercise interventions on vascular risk factors.",
+   "base": {
+    "include": true,
+    "p": 0.5956,
+    "design": "rct",
+    "ms": 5857
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0228,
+    "design": "review",
+    "ms": 5781
+   }
+  },
+  {
+   "pmid": "16293781",
+   "gold": 1,
+   "title": "Efficacy of intensive multitherapy for patients with type 2 diabetes mellitus: a randomized controlled trial.",
+   "base": {
+    "include": true,
+    "p": 0.5198,
+    "design": "rct",
+    "ms": 7274
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0339,
+    "design": "rct",
+    "ms": 7279
+   }
+  },
+  {
+   "pmid": "16839841",
+   "gold": 1,
+   "title": "Effects of lifestyle modification on metabolic parameters and carotid intima-media thickness in patients with type 2 dia",
+   "base": {
+    "include": true,
+    "p": 0.7253,
+    "design": "rct",
+    "ms": 7392
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1373,
+    "design": "rct",
+    "ms": 7349
+   }
+  },
+  {
+   "pmid": "16944096",
+   "gold": 1,
+   "title": "Six months of aerobic exercise does not improve microvascular function in type 2 diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.8052,
+    "design": "rct",
+    "ms": 7517
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.4814,
+    "design": "rct",
+    "ms": 7513
+   }
+  },
+  {
+   "pmid": "17108753",
+   "gold": 1,
+   "title": "Utility of a Web-based intervention for individuals with type 2 diabetes: the impact on physical activity levels and gly",
+   "base": {
+    "include": false,
+    "p": 0.3661,
+    "design": "rct",
+    "ms": 4392
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0629,
+    "design": "rct",
+    "ms": 4269
+   }
+  },
+  {
+   "pmid": "17876019",
+   "gold": 1,
+   "title": "Effects of aerobic training, resistance training, or both on glycemic control in type 2 diabetes: a randomized trial.",
+   "base": {
+    "include": true,
+    "p": 0.9204,
+    "design": "rct",
+    "ms": 7365
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.9332,
+    "design": "rct",
+    "ms": 7313
+   }
+  },
+  {
+   "pmid": "18511528",
+   "gold": 1,
+   "title": "Influence of combined exercise training on indices of obesity, diabetes and cardiovascular risk in type 2 diabetes patie",
+   "base": {
+    "include": true,
+    "p": 0.9106,
+    "design": "rct",
+    "ms": 7287
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.8074,
+    "design": "rct",
+    "ms": 7251
+   }
+  },
+  {
+   "pmid": "19157617",
+   "gold": 1,
+   "title": "A pilot randomised controlled trial of resistance exercise bands in the management of sedentary subjects with type 2 dia",
+   "base": {
+    "include": true,
+    "p": 0.8674,
+    "design": "rct",
+    "ms": 2078
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.8903,
+    "design": "rct",
+    "ms": 2044
+   }
+  },
+  {
+   "pmid": "19219261",
+   "gold": 1,
+   "title": "Effect of frequency of physical exercise on glycemic control and body composition in type 2 diabetic patients.",
+   "base": {
+    "include": true,
+    "p": 0.6572,
+    "design": "rct",
+    "ms": 7325
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0678,
+    "design": "other",
+    "ms": 7278
+   }
+  },
+  {
+   "pmid": "19317825",
+   "gold": 1,
+   "title": "A randomized trial investigating the 12-month changes in physical activity and health outcomes following a physical acti",
+   "base": {
+    "include": true,
+    "p": 0.7025,
+    "design": "rct",
+    "ms": 6187
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0973,
+    "design": "rct",
+    "ms": 6264
+   }
+  },
+  {
+   "pmid": "19429570",
+   "gold": 1,
+   "title": "Effects of exercise intervention on myocardial function in type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.86,
+    "design": "rct",
+    "ms": 7343
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.7643,
+    "design": "rct",
+    "ms": 7323
+   }
+  },
+  {
+   "pmid": "19922961",
+   "gold": 1,
+   "title": "Exercise training ameliorates the effects of rosiglitazone on traditional and novel cardiovascular risk factors in patie",
+   "base": {
+    "include": true,
+    "p": 0.9236,
+    "design": "rct",
+    "ms": 7246
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.079,
+    "design": "rct",
+    "ms": 7290
+   }
+  },
+  {
+   "pmid": "20003224",
+   "gold": 1,
+   "title": "Aerobic exercise in obese diabetic patients with chronic kidney disease: a randomized and controlled pilot study.",
+   "base": {
+    "include": true,
+    "p": 0.7408,
+    "design": "rct",
+    "ms": 4880
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0282,
+    "design": "rct",
+    "ms": 4840
+   }
+  },
+  {
+   "pmid": "20019197",
+   "gold": 1,
+   "title": "Promoting physical activity for persons with diabetes.",
+   "base": {
+    "include": false,
+    "p": 0.2932,
+    "design": "rct",
+    "ms": 5084
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0086,
+    "design": "other",
+    "ms": 5144
+   }
+  },
+  {
+   "pmid": "20139661",
+   "gold": 1,
+   "title": "Increase in the heart rate variability with deep breathing in diabetic patients after 12-month exercise training.",
+   "base": {
+    "include": true,
+    "p": 0.827,
+    "design": "rct",
+    "ms": 5626
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0755,
+    "design": "other",
+    "ms": 5613
+   }
+  },
+  {
+   "pmid": "21059972",
+   "gold": 1,
+   "title": "Effect of an intensive exercise intervention strategy on modifiable cardiovascular risk factors in subjects with type 2 ",
+   "base": {
+    "include": true,
+    "p": 0.8961,
+    "design": "rct",
+    "ms": 7290
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.902,
+    "design": "rct",
+    "ms": 7315
+   }
+  },
+  {
+   "pmid": "21098771",
+   "gold": 1,
+   "title": "Effects of aerobic and resistance training on hemoglobin A1c levels in patients with type 2 diabetes: a randomized contr",
+   "base": {
+    "include": true,
+    "p": 0.8772,
+    "design": "rct",
+    "ms": 7424
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.8646,
+    "design": "rct",
+    "ms": 7317
+   }
+  },
+  {
+   "pmid": "2649339",
+   "gold": 1,
+   "title": "Effects of exercise on cardiovascular disease risk in women with NIDDM.",
+   "base": {
+    "include": true,
+    "p": 0.7577,
+    "design": "rct",
+    "ms": 5943
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0022,
+    "design": "other",
+    "ms": 5907
+   }
+  },
+  {
+   "pmid": "3535397",
+   "gold": 1,
+   "title": "A controlled randomized study on the effect of long-term physical exercise on the metabolic control in type 2 diabetic p",
+   "base": {
+    "include": true,
+    "p": 0.8434,
+    "design": "rct",
+    "ms": 3993
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0282,
+    "design": "rct",
+    "ms": 4011
+   }
+  },
+  {
+   "pmid": "9279482",
+   "gold": 1,
+   "title": "Will older sedentary people with non-insulin-dependent diabetes mellitus start exercising? A health promotion model.",
+   "base": {
+    "include": true,
+    "p": 0.8308,
+    "design": "rct",
+    "ms": 5125
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0852,
+    "design": "review",
+    "ms": 5163
+   }
+  },
+  {
+   "pmid": "9301427",
+   "gold": 1,
+   "title": "Effects of physical training on metabolic control in elderly type 2 diabetes mellitus patients.",
+   "base": {
+    "include": true,
+    "p": 0.8444,
+    "design": "rct",
+    "ms": 7337
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.6483,
+    "design": "rct",
+    "ms": 7339
+   }
+  },
+  {
+   "pmid": "9314625",
+   "gold": 1,
+   "title": "A randomized controlled trial of weight reduction and exercise for diabetes management in older African-American subject",
+   "base": {
+    "include": true,
+    "p": 0.9173,
+    "design": "rct",
+    "ms": 7413
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.9146,
+    "design": "rct",
+    "ms": 7362
+   }
+  },
+  {
+   "pmid": "19675378",
+   "gold": 0,
+   "title": "Effects of resistance training on metabolic profile of adults with type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.8598,
+    "design": "rct",
+    "ms": 7368
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.7273,
+    "design": "review",
+    "ms": 7330
+   }
+  },
+  {
+   "pmid": "12109592",
+   "gold": 0,
+   "title": "Effect of smoking on hemoglobin A1c and body mass index in patients with type 2 diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.836,
+    "design": "review",
+    "ms": 6249
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0272,
+    "design": "other",
+    "ms": 6184
+   }
+  },
+  {
+   "pmid": "10751238",
+   "gold": 0,
+   "title": "Glycaemic control in type 2 diabetes: the impact of body weight, beta-cell function and patient education.",
+   "base": {
+    "include": true,
+    "p": 0.6869,
+    "design": "cohort",
+    "ms": 7427
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0154,
+    "design": "cohort",
+    "ms": 7340
+   }
+  },
+  {
+   "pmid": "20683173",
+   "gold": 0,
+   "title": "Orlistat and L-carnitine compared to orlistat alone on insulin resistance in obese diabetic patients.",
+   "base": {
+    "include": true,
+    "p": 0.8051,
+    "design": "rct",
+    "ms": 7383
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1225,
+    "design": "rct",
+    "ms": 7351
+   }
+  },
+  {
+   "pmid": "15846672",
+   "gold": 0,
+   "title": "Interventions for improving adherence to treatment recommendations in people with type 2 diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.848,
+    "design": "review",
+    "ms": 7366
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.3263,
+    "design": "review",
+    "ms": 7297
+   }
+  },
+  {
+   "pmid": "15543562",
+   "gold": 0,
+   "title": "Peroxisome proliferator-activated receptor gamma gene polymorphism is associated with serum triglyceride levels and body",
+   "base": {
+    "include": true,
+    "p": 0.8676,
+    "design": "review",
+    "ms": 5087
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0344,
+    "design": "review",
+    "ms": 5077
+   }
+  },
+  {
+   "pmid": "15258368",
+   "gold": 0,
+   "title": "Type 2 diabetics with higher plasma viscosity exhibit a higher blood pressure.",
+   "base": {
+    "include": true,
+    "p": 0.62,
+    "design": "review",
+    "ms": 5247
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0189,
+    "design": "review",
+    "ms": 5230
+   }
+  },
+  {
+   "pmid": "20649633",
+   "gold": 0,
+   "title": "Opposite effects of pioglitazone and rosiglitazone on mitochondrial respiration in skeletal muscle of patients with type",
+   "base": {
+    "include": true,
+    "p": 0.831,
+    "design": "rct",
+    "ms": 7390
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1046,
+    "design": "review",
+    "ms": 7410
+   }
+  },
+  {
+   "pmid": "12017222",
+   "gold": 0,
+   "title": "Impaired beta-cell and alpha-cell function in African-American children with type 2 diabetes mellitus--\"Flatbush diabete",
+   "base": {
+    "include": false,
+    "p": 0.1782,
+    "design": "invitro",
+    "ms": 7419
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.2169,
+    "design": "invitro",
+    "ms": 7324
+   }
+  },
+  {
+   "pmid": "20054172",
+   "gold": 0,
+   "title": "Pathogenesis, risk assessment and prevention of type 2 diabetes mellitus.",
+   "base": {
+    "include": false,
+    "p": 0.4281,
+    "design": "review",
+    "ms": 4243
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0174,
+    "design": "review",
+    "ms": 4239
+   }
+  },
+  {
+   "pmid": "20678233",
+   "gold": 0,
+   "title": "Living Well with Diabetes: a randomized controlled trial of a telephone-delivered intervention for maintenance of weight",
+   "base": {
+    "include": true,
+    "p": 0.8025,
+    "design": "rct",
+    "ms": 7370
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1222,
+    "design": "rct",
+    "ms": 7466
+   }
+  },
+  {
+   "pmid": "8590781",
+   "gold": 0,
+   "title": "Evaluation of the effectiveness of an ambulatory teaching/treatment programme for non-insulin dependent (type 2) diabeti",
+   "base": {
+    "include": true,
+    "p": 0.924,
+    "design": "rct",
+    "ms": 5994
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.4565,
+    "design": "review",
+    "ms": 5744
+   }
+  },
+  {
+   "pmid": "18645345",
+   "gold": 0,
+   "title": "Effect of drugs interacting with the dopaminergic receptors on glucose levels and insulin release in healthy and type 2 ",
+   "base": {
+    "include": false,
+    "p": 0.1772,
+    "design": "invitro",
+    "ms": 7374
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0203,
+    "design": "invitro",
+    "ms": 7337
+   }
+  },
+  {
+   "pmid": "19192106",
+   "gold": 0,
+   "title": "Erectile dysfunction in type 2 diabetic men: relationship to exercise fitness and cardiovascular risk factors in the Loo",
+   "base": {
+    "include": true,
+    "p": 0.8089,
+    "design": "rct",
+    "ms": 7316
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0931,
+    "design": "other",
+    "ms": 7622
+   }
+  },
+  {
+   "pmid": "17414590",
+   "gold": 0,
+   "title": "Metformin plus low-dose glimeperide significantly improves Homeostasis Model Assessment for insulin resistance (HOMA(IR)",
+   "base": {
+    "include": false,
+    "p": 0.2865,
+    "design": "rct",
+    "ms": 7496
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0238,
+    "design": "other",
+    "ms": 7383
+   }
+  },
+  {
+   "pmid": "10862311",
+   "gold": 0,
+   "title": "Prevalence of coronary risk factors in non-insulin dependent (type 2) diabetics.",
+   "base": {
+    "include": true,
+    "p": 0.8881,
+    "design": "cohort",
+    "ms": 7426
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.305,
+    "design": "other",
+    "ms": 7437
+   }
+  },
+  {
+   "pmid": "11874944",
+   "gold": 0,
+   "title": "Differential effects of metformin and troglitazone on cardiovascular risk factors in patients with type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.5388,
+    "design": "rct",
+    "ms": 7387
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0397,
+    "design": "other",
+    "ms": 7397
+   }
+  },
+  {
+   "pmid": "15223990",
+   "gold": 0,
+   "title": "Polymorphism of stress protein HSP70-2 gene in Tunisians: susceptibility implications in type 2 diabetes and obesity.",
+   "base": {
+    "include": false,
+    "p": 0.2771,
+    "design": "review",
+    "ms": 7387
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0165,
+    "design": "review",
+    "ms": 7319
+   }
+  },
+  {
+   "pmid": "15357373",
+   "gold": 0,
+   "title": "Diabetes update: promoting effective disease management.",
+   "base": {
+    "include": false,
+    "p": 0.1969,
+    "design": "review",
+    "ms": 2403
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0014,
+    "design": "other",
+    "ms": 2381
+   }
+  },
+  {
+   "pmid": "18309535",
+   "gold": 0,
+   "title": "[Insulin-using woman with type 2 diabetes and weight problems].",
+   "base": {
+    "include": false,
+    "p": 0.4651,
+    "design": "review",
+    "ms": 5738
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0014,
+    "design": "review",
+    "ms": 5670
+   }
+  },
+  {
+   "pmid": "19293537",
+   "gold": 0,
+   "title": "Risk assessment by post-challenge plasma glucose, insulin response ratio, and other indices of insulin resistance and/or",
+   "base": {
+    "include": true,
+    "p": 0.5955,
+    "design": "review",
+    "ms": 7484
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0142,
+    "design": "review",
+    "ms": 7365
+   }
+  },
+  {
+   "pmid": "10782754",
+   "gold": 0,
+   "title": "Effects of acarbose treatment in Type 2 diabetic patients under dietary training: a multicentre, double-blind, placebo-c",
+   "base": {
+    "include": true,
+    "p": 0.7855,
+    "design": "rct",
+    "ms": 6379
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.9077,
+    "design": "rct",
+    "ms": 6345
+   }
+  },
+  {
+   "pmid": "18839053",
+   "gold": 0,
+   "title": "The effect of metformin on leptin in obese patients with type 2 diabetes mellitus and nonalcoholic fatty liver disease.",
+   "base": {
+    "include": false,
+    "p": 0.4324,
+    "design": "rct",
+    "ms": 5466
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0026,
+    "design": "review",
+    "ms": 5848
+   }
+  },
+  {
+   "pmid": "15001195",
+   "gold": 0,
+   "title": "Blood pressure and cardiac autonomic nervous system in obese type 2 diabetic patients: effect of metformin administratio",
+   "base": {
+    "include": true,
+    "p": 0.8294,
+    "design": "review",
+    "ms": 5429
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0268,
+    "design": "review",
+    "ms": 5484
+   }
+  },
+  {
+   "pmid": "20523342",
+   "gold": 0,
+   "title": "IGF2BP2 variations influence repaglinide response and risk of type 2 diabetes in Chinese population.",
+   "base": {
+    "include": false,
+    "p": 0.4792,
+    "design": "rct",
+    "ms": 7358
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0389,
+    "design": "other",
+    "ms": 7386
+   }
+  },
+  {
+   "pmid": "19788143",
+   "gold": 0,
+   "title": "[Significant periodical fluctuation of insulin requirement in patients with type 2 diabetes].",
+   "base": {
+    "include": true,
+    "p": 0.7342,
+    "design": "review",
+    "ms": 2706
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0008,
+    "design": "review",
+    "ms": 2714
+   }
+  },
+  {
+   "pmid": "20350913",
+   "gold": 0,
+   "title": "A prospective trial of U500 insulin delivered by Omnipod in patients with type 2 diabetes mellitus and severe insulin re",
+   "base": {
+    "include": true,
+    "p": 0.9016,
+    "design": "rct",
+    "ms": 7435
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.9103,
+    "design": "rct",
+    "ms": 7379
+   }
+  },
+  {
+   "pmid": "17383302",
+   "gold": 0,
+   "title": "Use of intensified comprehensive cardiac rehabilitation to improve risk factor control in patients with type 2 diabetes ",
+   "base": {
+    "include": true,
+    "p": 0.887,
+    "design": "review",
+    "ms": 7321
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.9205,
+    "design": "review",
+    "ms": 7356
+   }
+  },
+  {
+   "pmid": "15240931",
+   "gold": 0,
+   "title": "Lipid peroxidation and resistance to oxidation in patients with type 2 diabetes mellitus.",
+   "base": {
+    "include": false,
+    "p": 0.2368,
+    "design": "rct",
+    "ms": 4988
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0026,
+    "design": "cohort",
+    "ms": 5084
+   }
+  },
+  {
+   "pmid": "19183462",
+   "gold": 0,
+   "title": "Nurse-led motivational interviewing to change the lifestyle of patients with type 2 diabetes (MILD-project): protocol fo",
+   "base": {
+    "include": true,
+    "p": 0.6614,
+    "design": "rct",
+    "ms": 7672
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0172,
+    "design": "review",
+    "ms": 7406
+   }
+  },
+  {
+   "pmid": "15871859",
+   "gold": 0,
+   "title": "Plasma homocysteine levels in patients with type 2 diabetes in a Mediterranean population: relation with nutritional and",
+   "base": {
+    "include": false,
+    "p": 0.3889,
+    "design": "cohort",
+    "ms": 7386
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0121,
+    "design": "other",
+    "ms": 7323
+   }
+  },
+  {
+   "pmid": "21355875",
+   "gold": 0,
+   "title": "Diabetes management in an Australian primary care population.",
+   "base": {
+    "include": true,
+    "p": 0.6596,
+    "design": "review",
+    "ms": 5737
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0358,
+    "design": "review",
+    "ms": 5737
+   }
+  },
+  {
+   "pmid": "7924875",
+   "gold": 0,
+   "title": "Effect of strict metabolic control on glucose handling by the liver and peripheral tissues in non-insulin-dependent diab",
+   "base": {
+    "include": true,
+    "p": 0.6804,
+    "design": "rct",
+    "ms": 5805
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0265,
+    "design": "review",
+    "ms": 5736
+   }
+  },
+  {
+   "pmid": "10410380",
+   "gold": 0,
+   "title": "Urinary platelet-activating factor excretion is elevated in non-insulin dependent diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.5651,
+    "design": "rct",
+    "ms": 7640
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0271,
+    "design": "invitro",
+    "ms": 7467
+   }
+  },
+  {
+   "pmid": "20923480",
+   "gold": 0,
+   "title": "Effects of testosterone on Type 2 diabetes and components of the metabolic syndrome.",
+   "base": {
+    "include": false,
+    "p": 0.0828,
+    "design": "review",
+    "ms": 3481
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0038,
+    "design": "review",
+    "ms": 3471
+   }
+  },
+  {
+   "pmid": "21328992",
+   "gold": 0,
+   "title": "[Effects of taurine on hemorheology of rats with type 2 diabetes].",
+   "base": {
+    "include": false,
+    "p": 0.2195,
+    "design": "rct",
+    "ms": 5547
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0013,
+    "design": "invitro",
+    "ms": 5558
+   }
+  },
+  {
+   "pmid": "12810608",
+   "gold": 0,
+   "title": "Abnormal cardiac and skeletal muscle energy metabolism in patients with type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.7378,
+    "design": "review",
+    "ms": 6073
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1216,
+    "design": "review",
+    "ms": 6064
+   }
+  },
+  {
+   "pmid": "20223123",
+   "gold": 0,
+   "title": "Clinical effectiveness and cost-effectiveness of continuous subcutaneous insulin infusion for diabetes: systematic revie",
+   "base": {
+    "include": true,
+    "p": 0.8395,
+    "design": "review",
+    "ms": 7510
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0205,
+    "design": "review",
+    "ms": 7715
+   }
+  },
+  {
+   "pmid": "17420441",
+   "gold": 0,
+   "title": "Changes in depressive symptoms and glycemic control in diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.6464,
+    "design": "rct",
+    "ms": 5974
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0209,
+    "design": "review",
+    "ms": 5781
+   }
+  },
+  {
+   "pmid": "16538489",
+   "gold": 0,
+   "title": "Molecular mechanisms involved in the resistance of fibrin to clot lysis by plasmin in subjects with type 2 diabetes mell",
+   "base": {
+    "include": true,
+    "p": 0.5574,
+    "design": "invitro",
+    "ms": 7380
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.4261,
+    "design": "invitro",
+    "ms": 7321
+   }
+  },
+  {
+   "pmid": "12766128",
+   "gold": 0,
+   "title": "Cutaneous blood flow in type 2 diabetic individuals after an acute bout of maximal exercise.",
+   "base": {
+    "include": false,
+    "p": 0.1439,
+    "design": "invitro",
+    "ms": 5998
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0031,
+    "design": "other",
+    "ms": 5927
+   }
+  },
+  {
+   "pmid": "15200348",
+   "gold": 0,
+   "title": "The role of sulphonylureas in the management of type 2 diabetes mellitus.",
+   "base": {
+    "include": false,
+    "p": 0.1783,
+    "design": "review",
+    "ms": 6513
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0007,
+    "design": "review",
+    "ms": 6447
+   }
+  },
+  {
+   "pmid": "20948500",
+   "gold": 0,
+   "title": "Effects of low-dose of niacin associated to simvastatin in the treatment of mixed dyslipidemia Salgad.",
+   "base": {
+    "include": true,
+    "p": 0.8221,
+    "design": "rct",
+    "ms": 4832
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0309,
+    "design": "rct",
+    "ms": 4761
+   }
+  },
+  {
+   "pmid": "16505498",
+   "gold": 0,
+   "title": "Efficacy of benfluorex in combination with sulfonylurea in type 2 diabetic patients: an 18-week, randomized, double-blin",
+   "base": {
+    "include": true,
+    "p": 0.821,
+    "design": "rct",
+    "ms": 7316
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.7677,
+    "design": "rct",
+    "ms": 7322
+   }
+  },
+  {
+   "pmid": "11874428",
+   "gold": 0,
+   "title": "Glycaemic control, disease duration and beta-cell function in patients with Type 2 diabetes in a Swedish community. Skar",
+   "base": {
+    "include": true,
+    "p": 0.8051,
+    "design": "review",
+    "ms": 7324
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.003,
+    "design": "review",
+    "ms": 7311
+   }
+  },
+  {
+   "pmid": "17017752",
+   "gold": 0,
+   "title": "Randomized trial of a whole-system ayurvedic protocol for type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.8868,
+    "design": "rct",
+    "ms": 7404
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.5009,
+    "design": "rct",
+    "ms": 7367
+   }
+  },
+  {
+   "pmid": "11915585",
+   "gold": 0,
+   "title": "Effect of hormone replacement therapy on insulin secretion and insulin sensitivity in postmenopausal diabetic women.",
+   "base": {
+    "include": false,
+    "p": 0.3562,
+    "design": "rct",
+    "ms": 7390
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0006,
+    "design": "review",
+    "ms": 7312
+   }
+  },
+  {
+   "pmid": "16784965",
+   "gold": 0,
+   "title": "The influence of chromium chloride-containing milk to glycemic control of patients with type 2 diabetes mellitus: a rand",
+   "base": {
+    "include": true,
+    "p": 0.678,
+    "design": "rct",
+    "ms": 7349
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.3485,
+    "design": "rct",
+    "ms": 7389
+   }
+  },
+  {
+   "pmid": "3554200",
+   "gold": 0,
+   "title": "Non-insulin-dependent diabetes mellitus. Current status of oral hypoglycemic therapy.",
+   "base": {
+    "include": true,
+    "p": 0.7966,
+    "design": "review",
+    "ms": 3352
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0492,
+    "design": "review",
+    "ms": 3369
+   }
+  },
+  {
+   "pmid": "16570234",
+   "gold": 0,
+   "title": "Visceral adipose tissue as an indicator of insulin resistance in nonobese patients with new onset type 2 diabetes mellit",
+   "base": {
+    "include": true,
+    "p": 0.5434,
+    "design": "review",
+    "ms": 5337
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0025,
+    "design": "review",
+    "ms": 5587
+   }
+  },
+  {
+   "pmid": "19327425",
+   "gold": 0,
+   "title": "Effect of long-term endurance and strength training on metabolic control and arterial elasticity in patients with type 2",
+   "base": {
+    "include": false,
+    "p": 0.3571,
+    "design": "rct",
+    "ms": 7402
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0127,
+    "design": "review",
+    "ms": 7460
+   }
+  },
+  {
+   "pmid": "15735201",
+   "gold": 0,
+   "title": "Youth type 2 diabetes: insulin resistance, beta-cell failure, or both?",
+   "base": {
+    "include": false,
+    "p": 0.4998,
+    "design": "rct",
+    "ms": 7327
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0309,
+    "design": "other",
+    "ms": 7262
+   }
+  },
+  {
+   "pmid": "21341457",
+   "gold": 0,
+   "title": "[Clinical and metabolic risk factors for cardiovascular autonomic neuropathy in patients with type 2 diabetes mellitus].",
+   "base": {
+    "include": true,
+    "p": 0.9267,
+    "design": "rct",
+    "ms": 3979
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.4465,
+    "design": "review",
+    "ms": 3801
+   }
+  },
+  {
+   "pmid": "11063281",
+   "gold": 0,
+   "title": "Review of prandial glucose regulation with repaglinide: a solution to the problem of hypoglycaemia in the treatment of T",
+   "base": {
+    "include": true,
+    "p": 0.8884,
+    "design": "review",
+    "ms": 7548
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0055,
+    "design": "review",
+    "ms": 7497
+   }
+  },
+  {
+   "pmid": "20605615",
+   "gold": 0,
+   "title": "Vaspin and visfatin/Nampt are interesting interrelated adipokines playing a role in the pathogenesis of type 2 diabetes ",
+   "base": {
+    "include": true,
+    "p": 0.6782,
+    "design": "review",
+    "ms": 7368
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0787,
+    "design": "review",
+    "ms": 7394
+   }
+  },
+  {
+   "pmid": "17848154",
+   "gold": 0,
+   "title": "Impact of education on disease knowledge and glycaemic control among type 2 diabetic patients in family practice.",
+   "base": {
+    "include": true,
+    "p": 0.8965,
+    "design": "rct",
+    "ms": 4798
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.3577,
+    "design": "review",
+    "ms": 4696
+   }
+  },
+  {
+   "pmid": "18543523",
+   "gold": 0,
+   "title": "Type 2 diabetes mellitus: clinical and aetiologic types, therapy and quality of glycaemic control of ambulatory patients",
+   "base": {
+    "include": true,
+    "p": 0.8428,
+    "design": "review",
+    "ms": 7378
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1685,
+    "design": "other",
+    "ms": 7440
+   }
+  },
+  {
+   "pmid": "12414910",
+   "gold": 0,
+   "title": "Neither homeostasis model assessment nor quantitative insulin sensitivity check index can predict insulin resistance in ",
+   "base": {
+    "include": true,
+    "p": 0.8349,
+    "design": "review",
+    "ms": 6621
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.5476,
+    "design": "review",
+    "ms": 6630
+   }
+  },
+  {
+   "pmid": "9313761",
+   "gold": 0,
+   "title": "Beta 3-adrenoreceptor gene polymorphism: a newly identified risk factor for proliferative retinopathy in NIDDM patients.",
+   "base": {
+    "include": true,
+    "p": 0.9188,
+    "design": "rct",
+    "ms": 5994
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.3775,
+    "design": "review",
+    "ms": 6103
+   }
+  },
+  {
+   "pmid": "17003306",
+   "gold": 0,
+   "title": "The effect of pioglitazone on the liver: role of adiponectin.",
+   "base": {
+    "include": false,
+    "p": 0.3636,
+    "design": "rct",
+    "ms": 7505
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0835,
+    "design": "invitro",
+    "ms": 7791
+   }
+  },
+  {
+   "pmid": "11577798",
+   "gold": 0,
+   "title": "Repaglinide: a review of its therapeutic use in type 2 diabetes mellitus.",
+   "base": {
+    "include": false,
+    "p": 0.1773,
+    "design": "rct",
+    "ms": 7351
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0794,
+    "design": "review",
+    "ms": 7306
+   }
+  },
+  {
+   "pmid": "18722695",
+   "gold": 0,
+   "title": "[New therapies for type 2 diabetes: what place for incretin-based agents and rimonabant compared to the previous ones?].",
+   "base": {
+    "include": false,
+    "p": 0.3595,
+    "design": "review",
+    "ms": 7311
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0293,
+    "design": "review",
+    "ms": 7360
+   }
+  },
+  {
+   "pmid": "15991797",
+   "gold": 0,
+   "title": "Clinical and laboratory evaluation of a new specific ELISA for intact proinsulin.",
+   "base": {
+    "include": false,
+    "p": 0.0725,
+    "design": "invitro",
+    "ms": 7376
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0006,
+    "design": "invitro",
+    "ms": 7383
+   }
+  },
+  {
+   "pmid": "22046388",
+   "gold": 0,
+   "title": "Urinary bisphenol A and type-2 diabetes in U.S. adults: data from NHANES 2003-2008.",
+   "base": {
+    "include": true,
+    "p": 0.7762,
+    "design": "review",
+    "ms": 7357
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0238,
+    "design": "review",
+    "ms": 7431
+   }
+  },
+  {
+   "pmid": "19567114",
+   "gold": 0,
+   "title": "[Expression of omentin in adipose tissues in obese and type 2 diabetic patients].",
+   "base": {
+    "include": true,
+    "p": 0.8835,
+    "design": "invitro",
+    "ms": 7437
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1611,
+    "design": "invitro",
+    "ms": 7296
+   }
+  },
+  {
+   "pmid": "19450204",
+   "gold": 0,
+   "title": "Healthy country, healthy people: the relationship between Indigenous health status and \"caring for country\".",
+   "base": {
+    "include": false,
+    "p": 0.2981,
+    "design": "rct",
+    "ms": 7387
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0727,
+    "design": "other",
+    "ms": 7305
+   }
+  },
+  {
+   "pmid": "8435991",
+   "gold": 0,
+   "title": "Effect of metabolic control on autonomic function in obese patients with newly diagnosed type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.5847,
+    "design": "rct",
+    "ms": 5992
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0052,
+    "design": "rct",
+    "ms": 6049
+   }
+  },
+  {
+   "pmid": "7677463",
+   "gold": 0,
+   "title": "Who would have thought it? An operation proves to be the most effective therapy for adult-onset diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.7408,
+    "design": "review",
+    "ms": 7386
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0239,
+    "design": "review",
+    "ms": 7269
+   }
+  },
+  {
+   "pmid": "16801564",
+   "gold": 0,
+   "title": "Combined treatment with exercise training and acarbose improves metabolic control and cardiovascular risk factor profile",
+   "base": {
+    "include": true,
+    "p": 0.7602,
+    "design": "rct",
+    "ms": 6491
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.089,
+    "design": "rct",
+    "ms": 6450
+   }
+  },
+  {
+   "pmid": "19079718",
+   "gold": 0,
+   "title": "Endothelial dysfunction: associations with exposure to ambient fine particles in diabetic individuals.",
+   "base": {
+    "include": false,
+    "p": 0.1325,
+    "design": "rct",
+    "ms": 6062
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0024,
+    "design": "invitro",
+    "ms": 5999
+   }
+  },
+  {
+   "pmid": "14763918",
+   "gold": 0,
+   "title": "Adiponectin is independently associated with glycosylated haemoglobin.",
+   "base": {
+    "include": true,
+    "p": 0.9551,
+    "design": "review",
+    "ms": 6206
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0886,
+    "design": "other",
+    "ms": 6216
+   }
+  },
+  {
+   "pmid": "20386878",
+   "gold": 0,
+   "title": "Association of glucose metabolism with diastolic function along the diabetic continuum.",
+   "base": {
+    "include": true,
+    "p": 0.8513,
+    "design": "review",
+    "ms": 6485
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.3148,
+    "design": "review",
+    "ms": 6271
+   }
+  },
+  {
+   "pmid": "11453240",
+   "gold": 0,
+   "title": "The effect of antimicrobial periodontal treatment on circulating tumor necrosis factor-alpha and glycated hemoglobin lev",
+   "base": {
+    "include": true,
+    "p": 0.7288,
+    "design": "review",
+    "ms": 5670
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0257,
+    "design": "review",
+    "ms": 5475
+   }
+  },
+  {
+   "pmid": "11114104",
+   "gold": 0,
+   "title": "Insulin resistance, cardiovascular risk factors and ultrasonically measured early arterial disease in normotensive Type ",
+   "base": {
+    "include": true,
+    "p": 0.8685,
+    "design": "review",
+    "ms": 7433
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.8063,
+    "design": "review",
+    "ms": 7377
+   }
+  },
+  {
+   "pmid": "19883146",
+   "gold": 0,
+   "title": "Patient versus general practitioner perception of problems with treatment adherence in type 2 diabetes: from adherence t",
+   "base": {
+    "include": true,
+    "p": 0.7701,
+    "design": "review",
+    "ms": 4624
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0012,
+    "design": "review",
+    "ms": 4726
+   }
+  },
+  {
+   "pmid": "15308383",
+   "gold": 0,
+   "title": "Insulin therapy in type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.772,
+    "design": "rct",
+    "ms": 2574
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0039,
+    "design": "other",
+    "ms": 2592
+   }
+  },
+  {
+   "pmid": "21074073",
+   "gold": 0,
+   "title": "[Panorama of currently available treatments for patients with type 2 diabetes. The ADA/EASD treatment algorithm. Safety ",
+   "base": {
+    "include": true,
+    "p": 0.6063,
+    "design": "review",
+    "ms": 7508
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1268,
+    "design": "review",
+    "ms": 7414
+   }
+  },
+  {
+   "pmid": "15955587",
+   "gold": 0,
+   "title": "Type 1 diabetes developed in a type 2 diabetic patient with severe insulin resistance.",
+   "base": {
+    "include": false,
+    "p": 0.1138,
+    "design": "review",
+    "ms": 5441
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0033,
+    "design": "review",
+    "ms": 5652
+   }
+  },
+  {
+   "pmid": "11586492",
+   "gold": 0,
+   "title": "Pioglitazone reduces urinary podocyte excretion in type 2 diabetes patients with microalbuminuria.",
+   "base": {
+    "include": false,
+    "p": 0.1412,
+    "design": "rct",
+    "ms": 6016
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0006,
+    "design": "invitro",
+    "ms": 5914
+   }
+  },
+  {
+   "pmid": "7476337",
+   "gold": 0,
+   "title": "Glycohemoglobin levels relate to the response of adipose tissue lipoprotein lipase to insulin/glucose in obese non-insul",
+   "base": {
+    "include": true,
+    "p": 0.5105,
+    "design": "review",
+    "ms": 6032
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0133,
+    "design": "review",
+    "ms": 6005
+   }
+  },
+  {
+   "pmid": "7846898",
+   "gold": 0,
+   "title": "[The value of metformin in therapy of type 2 diabetes: effect on insulin resistance, diabetic control and cardiovascular",
+   "base": {
+    "include": true,
+    "p": 0.5851,
+    "design": "review",
+    "ms": 2631
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0067,
+    "design": "review",
+    "ms": 2609
+   }
+  },
+  {
+   "pmid": "11979383",
+   "gold": 0,
+   "title": "Relationship of regional adiposity to insulin resistance and serum triglyceride levels in nonobese Japanese type 2 diabe",
+   "base": {
+    "include": true,
+    "p": 0.9161,
+    "design": "cohort",
+    "ms": 7408
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0013,
+    "design": "other",
+    "ms": 7309
+   }
+  },
+  {
+   "pmid": "17701878",
+   "gold": 0,
+   "title": "Comparison of insulin glargine versus NPH insulin in people with Type 2 diabetes mellitus under outpatient-clinic condit",
+   "base": {
+    "include": true,
+    "p": 0.589,
+    "design": "rct",
+    "ms": 7439
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0623,
+    "design": "other",
+    "ms": 7347
+   }
+  },
+  {
+   "pmid": "19629603",
+   "gold": 0,
+   "title": "The surgical treatment of type II diabetes mellitus: changes in HOMA Insulin resistance in the first year following lapa",
+   "base": {
+    "include": false,
+    "p": 0.3187,
+    "design": "review",
+    "ms": 7330
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0597,
+    "design": "review",
+    "ms": 7513
+   }
+  },
+  {
+   "pmid": "2515931",
+   "gold": 0,
+   "title": "Lipoprotein subfraction composition in non-obese newly diagnosed non-insulin dependent diabetes after treatment with die",
+   "base": {
+    "include": false,
+    "p": 0.2696,
+    "design": "rct",
+    "ms": 6366
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0261,
+    "design": "invitro",
+    "ms": 6383
+   }
+  },
+  {
+   "pmid": "16817816",
+   "gold": 0,
+   "title": "Treatment with a thiazolidinedione increases eye protrusion in a subgroup of patients with type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.8712,
+    "design": "rct",
+    "ms": 6503
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.505,
+    "design": "review",
+    "ms": 6388
+   }
+  },
+  {
+   "pmid": "12882850",
+   "gold": 0,
+   "title": "Biologic and quality-of-life outcomes from the Mediterranean Lifestyle Program: a randomized clinical trial.",
+   "base": {
+    "include": true,
+    "p": 0.5458,
+    "design": "rct",
+    "ms": 5354
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.126,
+    "design": "rct",
+    "ms": 5412
+   }
+  },
+  {
+   "pmid": "16884550",
+   "gold": 0,
+   "title": "Influence of diabetes mellitus on deep neck infection.",
+   "base": {
+    "include": true,
+    "p": 0.8345,
+    "design": "review",
+    "ms": 4116
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1846,
+    "design": "review",
+    "ms": 4132
+   }
+  },
+  {
+   "pmid": "16714840",
+   "gold": 0,
+   "title": "Relationship between the serum concentrations of C-reactive protein and parameters of adiposity and insulin resistance i",
+   "base": {
+    "include": true,
+    "p": 0.5707,
+    "design": "review",
+    "ms": 5875
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0047,
+    "design": "review",
+    "ms": 5816
+   }
+  },
+  {
+   "pmid": "15161773",
+   "gold": 0,
+   "title": "Repaglinide versus nateglinide monotherapy: a randomized, multicenter study.",
+   "base": {
+    "include": true,
+    "p": 0.568,
+    "design": "rct",
+    "ms": 7401
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.3013,
+    "design": "rct",
+    "ms": 7373
+   }
+  },
+  {
+   "pmid": "20012012",
+   "gold": 0,
+   "title": "Determinants of glucose tolerance in impaired glucose tolerance at baseline in the Actos Now for Prevention of Diabetes ",
+   "base": {
+    "include": true,
+    "p": 0.6605,
+    "design": "rct",
+    "ms": 7431
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.468,
+    "design": "other",
+    "ms": 7331
+   }
+  },
+  {
+   "pmid": "15743102",
+   "gold": 0,
+   "title": "A comparison of agents used to manage type 2 diabetes mellitus: need for reappraisal of traditional approaches.",
+   "base": {
+    "include": false,
+    "p": 0.1532,
+    "design": "review",
+    "ms": 4939
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0015,
+    "design": "review",
+    "ms": 5449
+   }
+  },
+  {
+   "pmid": "20350923",
+   "gold": 0,
+   "title": "Pilot study to evaluate the effect of short-term improvement in vitamin D status on glucose tolerance in patients with t",
+   "base": {
+    "include": true,
+    "p": 0.7489,
+    "design": "rct",
+    "ms": 5820
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1114,
+    "design": "other",
+    "ms": 5792
+   }
+  },
+  {
+   "pmid": "9609359",
+   "gold": 0,
+   "title": "Reducing lipid peroxidation stress of erythrocyte membrane by alpha-tocopherol nicotinate plays an important role in imp",
+   "base": {
+    "include": false,
+    "p": 0.2053,
+    "design": "rct",
+    "ms": 5522
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0144,
+    "design": "review",
+    "ms": 5557
+   }
+  },
+  {
+   "pmid": "20112820",
+   "gold": 0,
+   "title": "Protein glycation, insulin sensitivity and pancreatic beta cell function in high-risk, non-diabetic, first degree relati",
+   "base": {
+    "include": true,
+    "p": 0.7702,
+    "design": "cohort",
+    "ms": 4277
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0183,
+    "design": "other",
+    "ms": 4270
+   }
+  },
+  {
+   "pmid": "19763535",
+   "gold": 0,
+   "title": "Heritability and genetic correlations of insulin resistance and component phenotypes in Asian Indian families using a mu",
+   "base": {
+    "include": true,
+    "p": 0.6334,
+    "design": "rct",
+    "ms": 5441
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0011,
+    "design": "other",
+    "ms": 5504
+   }
+  },
+  {
+   "pmid": "11477493",
+   "gold": 0,
+   "title": "Low-dose growth hormone treatment combined with diet restriction decreases insulin resistance by reducing visceral fat a",
+   "base": {
+    "include": false,
+    "p": 0.2559,
+    "design": "rct",
+    "ms": 7386
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.048,
+    "design": "rct",
+    "ms": 7337
+   }
+  },
+  {
+   "pmid": "19370961",
+   "gold": 0,
+   "title": "[Risk factors for the development of diabetic nephropathy].",
+   "base": {
+    "include": true,
+    "p": 0.7094,
+    "design": "review",
+    "ms": 7532
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.333,
+    "design": "review",
+    "ms": 7415
+   }
+  },
+  {
+   "pmid": "19620188",
+   "gold": 0,
+   "title": "Screening for type 2 diabetes in obese youth.",
+   "base": {
+    "include": true,
+    "p": 0.6621,
+    "design": "review",
+    "ms": 7339
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0405,
+    "design": "review",
+    "ms": 7369
+   }
+  },
+  {
+   "pmid": "1342316",
+   "gold": 0,
+   "title": "Cardiovascular disease risk factors and glucose tolerance. The Wadena City Health Study.",
+   "base": {
+    "include": false,
+    "p": 0.1839,
+    "design": "rct",
+    "ms": 5807
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0006,
+    "design": "other",
+    "ms": 5612
+   }
+  },
+  {
+   "pmid": "18525066",
+   "gold": 0,
+   "title": "Exploring the pharmacotherapeutic options for treating type 2 diabetes.",
+   "base": {
+    "include": false,
+    "p": 0.1283,
+    "design": "review",
+    "ms": 5303
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0045,
+    "design": "review",
+    "ms": 5384
+   }
+  },
+  {
+   "pmid": "2060437",
+   "gold": 0,
+   "title": "Differential effect of diabetes education on self-regulation and life-style behaviors.",
+   "base": {
+    "include": false,
+    "p": 0.3708,
+    "design": "rct",
+    "ms": 4268
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.001,
+    "design": "other",
+    "ms": 4253
+   }
+  },
+  {
+   "pmid": "12898470",
+   "gold": 0,
+   "title": "Postprandial lipidemia is normal in non-obese type 2 diabetic patients with relatively preserved insulin secretion.",
+   "base": {
+    "include": false,
+    "p": 0.2556,
+    "design": "rct",
+    "ms": 6055
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0521,
+    "design": "other",
+    "ms": 5990
+   }
+  },
+  {
+   "pmid": "17890205",
+   "gold": 0,
+   "title": "Improvement in A1C levels and diabetes self-management activities following a nutrition and diabetes education program i",
+   "base": {
+    "include": true,
+    "p": 0.7528,
+    "design": "rct",
+    "ms": 5312
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.006,
+    "design": "other",
+    "ms": 5281
+   }
+  },
+  {
+   "pmid": "17011154",
+   "gold": 0,
+   "title": "Diabetes Education and Self-Management for Ongoing and Newly Diagnosed (DESMOND): process modelling of pilot study.",
+   "base": {
+    "include": true,
+    "p": 0.6708,
+    "design": "rct",
+    "ms": 5703
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0006,
+    "design": "rct",
+    "ms": 5911
+   }
+  },
+  {
+   "pmid": "15793194",
+   "gold": 0,
+   "title": "Increased urinary albumin excretion, insulin resistance, and related cardiovascular risk factors in patients with type 2",
+   "base": {
+    "include": true,
+    "p": 0.5835,
+    "design": "cohort",
+    "ms": 7402
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0042,
+    "design": "cohort",
+    "ms": 7313
+   }
+  },
+  {
+   "pmid": "9382011",
+   "gold": 0,
+   "title": "Association of fasting plasma free fatty acid concentration and frequency of ventricular premature complexes in nonische",
+   "base": {
+    "include": true,
+    "p": 0.8126,
+    "design": "rct",
+    "ms": 7468
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0023,
+    "design": "review",
+    "ms": 7340
+   }
+  },
+  {
+   "pmid": "19695853",
+   "gold": 0,
+   "title": "Anti-inflammatory effect of exercise training in subjects with type 2 diabetes and the metabolic syndrome is dependent o",
+   "base": {
+    "include": true,
+    "p": 0.8591,
+    "design": "rct",
+    "ms": 6239
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0189,
+    "design": "review",
+    "ms": 6246
+   }
+  },
+  {
+   "pmid": "20150021",
+   "gold": 0,
+   "title": "Treatment of hypogonadism with testosterone in patients with type 2 diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.6172,
+    "design": "rct",
+    "ms": 6277
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0823,
+    "design": "review",
+    "ms": 6302
+   }
+  },
+  {
+   "pmid": "18803987",
+   "gold": 0,
+   "title": "Efficacy and tolerability of exenatide monotherapy over 24 weeks in antidiabetic drug-naive patients with type 2 diabete",
+   "base": {
+    "include": true,
+    "p": 0.8359,
+    "design": "rct",
+    "ms": 7458
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.8902,
+    "design": "rct",
+    "ms": 7535
+   }
+  },
+  {
+   "pmid": "15232701",
+   "gold": 0,
+   "title": "The effects of a combined strength and aerobic exercise program on glucose control and insulin action in women with type",
+   "base": {
+    "include": true,
+    "p": 0.8749,
+    "design": "rct",
+    "ms": 7637
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.123,
+    "design": "other",
+    "ms": 7386
+   }
+  },
+  {
+   "pmid": "20129687",
+   "gold": 0,
+   "title": "Changes of serum omentin-1 levels in normal subjects and in patients with impaired glucose regulation and with newly dia",
+   "base": {
+    "include": true,
+    "p": 0.8695,
+    "design": "rct",
+    "ms": 5560
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0668,
+    "design": "review",
+    "ms": 5530
+   }
+  },
+  {
+   "pmid": "16384852",
+   "gold": 0,
+   "title": "Reduced skeletal muscle uncoupling protein-3 content in prediabetic subjects and type 2 diabetic patients: restoration b",
+   "base": {
+    "include": true,
+    "p": 0.7324,
+    "design": "rct",
+    "ms": 7353
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0187,
+    "design": "invitro",
+    "ms": 7395
+   }
+  },
+  {
+   "pmid": "3307404",
+   "gold": 0,
+   "title": "Achieving therapeutic goals in insulin-using diabetic patients with non-insulin-dependent diabetes mellitus. A weight re",
+   "base": {
+    "include": true,
+    "p": 0.934,
+    "design": "rct",
+    "ms": 7441
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0628,
+    "design": "rct",
+    "ms": 7366
+   }
+  },
+  {
+   "pmid": "21034377",
+   "gold": 0,
+   "title": "A comparison of preferences for two GLP-1 products--liraglutide and exenatide--for the treatment of type 2 diabetes.",
+   "base": {
+    "include": false,
+    "p": 0.1471,
+    "design": "rct",
+    "ms": 5993
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0008,
+    "design": "review",
+    "ms": 5992
+   }
+  },
+  {
+   "pmid": "21092710",
+   "gold": 0,
+   "title": "Effects of one year treatment of sibutramine on insulin resistance parameters in type 2 diabetic patients.",
+   "base": {
+    "include": true,
+    "p": 0.7698,
+    "design": "rct",
+    "ms": 6380
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0768,
+    "design": "review",
+    "ms": 6324
+   }
+  },
+  {
+   "pmid": "11261060",
+   "gold": 0,
+   "title": "Pharmacological interventions in type 2 diabetes: the role of nurses.",
+   "base": {
+    "include": true,
+    "p": 0.5248,
+    "design": "review",
+    "ms": 2564
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0041,
+    "design": "review",
+    "ms": 2513
+   }
+  },
+  {
+   "pmid": "15317606",
+   "gold": 0,
+   "title": "Metabolic, immunological and clinical characteristics in newly diagnosed Asian diabetes patients aged 12-40 years.",
+   "base": {
+    "include": true,
+    "p": 0.9038,
+    "design": "review",
+    "ms": 5591
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.572,
+    "design": "review",
+    "ms": 5589
+   }
+  },
+  {
+   "pmid": "21671527",
+   "gold": 0,
+   "title": "Progression of type 2 diabetes and insulin initiation.",
+   "base": {
+    "include": true,
+    "p": 0.727,
+    "design": "review",
+    "ms": 3076
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0007,
+    "design": "review",
+    "ms": 3124
+   }
+  },
+  {
+   "pmid": "16241930",
+   "gold": 0,
+   "title": "Long-term treatment experience in a subject with Dunnigan-type familial partial lipodystrophy: efficacy of rosiglitazone",
+   "base": {
+    "include": false,
+    "p": 0.4979,
+    "design": "rct",
+    "ms": 4227
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0215,
+    "design": "other",
+    "ms": 4236
+   }
+  },
+  {
+   "pmid": "17224062",
+   "gold": 0,
+   "title": "Walking behaviour and glycemic control in type 2 diabetes: seasonal and gender differences--study design and methods.",
+   "base": {
+    "include": true,
+    "p": 0.5901,
+    "design": "review",
+    "ms": 7655
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0187,
+    "design": "other",
+    "ms": 7538
+   }
+  },
+  {
+   "pmid": "15761575",
+   "gold": 0,
+   "title": "[Endurance training in adults with diabetes mellitus type 2].",
+   "base": {
+    "include": true,
+    "p": 0.8393,
+    "design": "rct",
+    "ms": 3950
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0724,
+    "design": "rct",
+    "ms": 3928
+   }
+  },
+  {
+   "pmid": "11382563",
+   "gold": 0,
+   "title": "The treatment of hypertension in patients with diabetes.",
+   "base": {
+    "include": false,
+    "p": 0.0541,
+    "design": "review",
+    "ms": 3657
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0009,
+    "design": "review",
+    "ms": 3640
+   }
+  },
+  {
+   "pmid": "15163923",
+   "gold": 0,
+   "title": "[Physical activity as a therapeutic tool in type 2 diabetes: the rationale].",
+   "base": {
+    "include": true,
+    "p": 0.671,
+    "design": "review",
+    "ms": 3437
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0061,
+    "design": "review",
+    "ms": 3429
+   }
+  },
+  {
+   "pmid": "9096992",
+   "gold": 0,
+   "title": "Intimal-medial thickness of the carotid artery in nondiabetic and NIDDM patients. Relationship with insulin resistance.",
+   "base": {
+    "include": true,
+    "p": 0.8282,
+    "design": "review",
+    "ms": 7413
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.4778,
+    "design": "review",
+    "ms": 7316
+   }
+  },
+  {
+   "pmid": "9702447",
+   "gold": 0,
+   "title": "Resistance training improves insulin sensitivity in NIDDM subjects without altering maximal oxygen uptake.",
+   "base": {
+    "include": true,
+    "p": 0.9565,
+    "design": "rct",
+    "ms": 6568
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.2521,
+    "design": "review",
+    "ms": 6469
+   }
+  },
+  {
+   "pmid": "18979908",
+   "gold": 0,
+   "title": "[Incretins in the treatment of diabetes].",
+   "base": {
+    "include": true,
+    "p": 0.7677,
+    "design": "review",
+    "ms": 3683
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1506,
+    "design": "review",
+    "ms": 3649
+   }
+  },
+  {
+   "pmid": "8203339",
+   "gold": 0,
+   "title": "Left ventricular systolic function in middle-aged patients with diabetes mellitus.",
+   "base": {
+    "include": false,
+    "p": 0.3813,
+    "design": "review",
+    "ms": 5610
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.6497,
+    "design": "other",
+    "ms": 5628
+   }
+  },
+  {
+   "pmid": "20536496",
+   "gold": 0,
+   "title": "Ramadan Education and Awareness in Diabetes (READ) programme for Muslims with Type 2 diabetes who fast during Ramadan.",
+   "base": {
+    "include": true,
+    "p": 0.7797,
+    "design": "review",
+    "ms": 6018
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0199,
+    "design": "other",
+    "ms": 6002
+   }
+  },
+  {
+   "pmid": "16229234",
+   "gold": 0,
+   "title": "[Prevalence of diabetes, antidiabetic treatment and chronic diabetic complications reported by general practitioners].",
+   "base": {
+    "include": true,
+    "p": 0.8465,
+    "design": "review",
+    "ms": 7366
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0722,
+    "design": "other",
+    "ms": 7332
+   }
+  },
+  {
+   "pmid": "15171752",
+   "gold": 0,
+   "title": "Thiazolidinedione therapy in the prevention/delay of type 2 diabetes in patients with impaired glucose tolerance and ins",
+   "base": {
+    "include": false,
+    "p": 0.4705,
+    "design": "rct",
+    "ms": 7395
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0342,
+    "design": "review",
+    "ms": 7347
+   }
+  },
+  {
+   "pmid": "19827910",
+   "gold": 0,
+   "title": "Efficacy and safety of pioglitazone/metformin fixed-dose combination therapy compared with pioglitazone and metformin mo",
+   "base": {
+    "include": true,
+    "p": 0.6728,
+    "design": "rct",
+    "ms": 7352
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.5959,
+    "design": "rct",
+    "ms": 7350
+   }
+  },
+  {
+   "pmid": "18275360",
+   "gold": 0,
+   "title": "Patients' perceptions of subcutaneous insulin in the OPTIMIZE study: a multicenter follow-up study.",
+   "base": {
+    "include": true,
+    "p": 0.8271,
+    "design": "review",
+    "ms": 7363
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.2006,
+    "design": "other",
+    "ms": 7502
+   }
+  },
+  {
+   "pmid": "17161231",
+   "gold": 0,
+   "title": "Longitudinal hair chromium profiles of elderly subjects with normal glucose tolerance and type 2 diabetes mellitus.",
+   "base": {
+    "include": false,
+    "p": 0.0927,
+    "design": "cohort",
+    "ms": 7544
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0022,
+    "design": "cohort",
+    "ms": 7316
+   }
+  },
+  {
+   "pmid": "8420815",
+   "gold": 0,
+   "title": "Picotamide, a dual TXB synthetase inhibitor and TXB receptor antagonist, reduces exercise-induced albuminuria in microal",
+   "base": {
+    "include": true,
+    "p": 0.7604,
+    "design": "rct",
+    "ms": 6287
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0784,
+    "design": "invitro",
+    "ms": 6275
+   }
+  },
+  {
+   "pmid": "9137980",
+   "gold": 0,
+   "title": "Circulating tumor necrosis factor alpha is elevated in male but not in female patients with type II diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.8214,
+    "design": "rct",
+    "ms": 4986
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1365,
+    "design": "review",
+    "ms": 4961
+   }
+  },
+  {
+   "pmid": "19709535",
+   "gold": 0,
+   "title": "[Effectiveness of PRECEDE model for health education in metabolic control and reduction of cardiovascular risk factors i",
+   "base": {
+    "include": true,
+    "p": 0.8853,
+    "design": "rct",
+    "ms": 5537
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0603,
+    "design": "review",
+    "ms": 5632
+   }
+  },
+  {
+   "pmid": "17826041",
+   "gold": 0,
+   "title": "Diabetes mellitus and macrovascular disease: mechanisms and mediators.",
+   "base": {
+    "include": true,
+    "p": 0.581,
+    "design": "review",
+    "ms": 5597
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.3275,
+    "design": "review",
+    "ms": 5471
+   }
+  },
+  {
+   "pmid": "12613394",
+   "gold": 0,
+   "title": "Study of yoga asanas in assessment of pulmonary function in NIDDM patients.",
+   "base": {
+    "include": true,
+    "p": 0.8098,
+    "design": "rct",
+    "ms": 7379
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0694,
+    "design": "review",
+    "ms": 7442
+   }
+  },
+  {
+   "pmid": "15735205",
+   "gold": 0,
+   "title": "Twice-weekly progressive resistance training decreases abdominal fat and improves insulin sensitivity in older men with ",
+   "base": {
+    "include": true,
+    "p": 0.9343,
+    "design": "rct",
+    "ms": 7489
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.8955,
+    "design": "invitro",
+    "ms": 7502
+   }
+  },
+  {
+   "pmid": "15563963",
+   "gold": 0,
+   "title": "Efficacy of glimepiride in type 2 diabetic patients treated with glibenclamide.",
+   "base": {
+    "include": true,
+    "p": 0.6893,
+    "design": "rct",
+    "ms": 3184
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0009,
+    "design": "review",
+    "ms": 3111
+   }
+  },
+  {
+   "pmid": "20721443",
+   "gold": 0,
+   "title": "Multigenerational inheritance and clinical characteristics of three large pedigrees with early-onset type 2 diabetes in ",
+   "base": {
+    "include": true,
+    "p": 0.896,
+    "design": "review",
+    "ms": 5059
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.9518,
+    "design": "other",
+    "ms": 4744
+   }
+  },
+  {
+   "pmid": "18588587",
+   "gold": 0,
+   "title": "Classification of adult patients with type 2 diabetes using the Temperament and Character Inventory.",
+   "base": {
+    "include": true,
+    "p": 0.5884,
+    "design": "review",
+    "ms": 5715
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0011,
+    "design": "review",
+    "ms": 5394
+   }
+  },
+  {
+   "pmid": "15717886",
+   "gold": 0,
+   "title": "Improvement of glycaemic control with rebound following orlistat initiation and cessation associated with minimal weight",
+   "base": {
+    "include": true,
+    "p": 0.649,
+    "design": "rct",
+    "ms": 5898
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.085,
+    "design": "rct",
+    "ms": 5621
+   }
+  },
+  {
+   "pmid": "20739208",
+   "gold": 0,
+   "title": "Correlation of plasma resistin with obesity and insulin resistance in type 2 diabetic patients.",
+   "base": {
+    "include": true,
+    "p": 0.7775,
+    "design": "cohort",
+    "ms": 6003
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0099,
+    "design": "cohort",
+    "ms": 5887
+   }
+  },
+  {
+   "pmid": "19125899",
+   "gold": 0,
+   "title": "Nateglinide and glibenclamide metabolic effects in naïve type 2 diabetic patients treated with metformin.",
+   "base": {
+    "include": false,
+    "p": 0.4745,
+    "design": "rct",
+    "ms": 7451
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0546,
+    "design": "rct",
+    "ms": 7391
+   }
+  },
+  {
+   "pmid": "17488343",
+   "gold": 0,
+   "title": "Monogenic diabetes: implications for therapy of rare types of disease.",
+   "base": {
+    "include": false,
+    "p": 0.2032,
+    "design": "review",
+    "ms": 5055
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0139,
+    "design": "review",
+    "ms": 4898
+   }
+  },
+  {
+   "pmid": "8727475",
+   "gold": 0,
+   "title": "Metabolic response of forearm muscle to graded exercise in type II diabetes mellitus: effect of endurance training.",
+   "base": {
+    "include": false,
+    "p": 0.1618,
+    "design": "rct",
+    "ms": 4154
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0117,
+    "design": "invitro",
+    "ms": 4146
+   }
+  },
+  {
+   "pmid": "19125700",
+   "gold": 0,
+   "title": "Effects of basal insulin analog and metformin on glycaemia control and weight as risk factors for endothelial dysfunctio",
+   "base": {
+    "include": true,
+    "p": 0.8361,
+    "design": "rct",
+    "ms": 7413
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0496,
+    "design": "review",
+    "ms": 7443
+   }
+  },
+  {
+   "pmid": "17192324",
+   "gold": 0,
+   "title": "Rosiglitazone in diabetes control in hemodialysis patients with and without viral hepatitis infection: effectiveness and",
+   "base": {
+    "include": true,
+    "p": 0.5198,
+    "design": "cohort",
+    "ms": 7390
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0679,
+    "design": "cohort",
+    "ms": 7518
+   }
+  },
+  {
+   "pmid": "16801569",
+   "gold": 0,
+   "title": "Dietary fibers and glycemic load, obesity, and plasma adiponectin levels in women with type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.8318,
+    "design": "review",
+    "ms": 6191
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0008,
+    "design": "other",
+    "ms": 6215
+   }
+  },
+  {
+   "pmid": "12547883",
+   "gold": 0,
+   "title": "Insulin sensitivity and lipid metabolism in human CD36 deficiency.",
+   "base": {
+    "include": true,
+    "p": 0.8501,
+    "design": "review",
+    "ms": 6001
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0328,
+    "design": "review",
+    "ms": 6020
+   }
+  },
+  {
+   "pmid": "18346811",
+   "gold": 0,
+   "title": "Efficacy of pioglitazone on type 2 diabetic patients with hemodialysis.",
+   "base": {
+    "include": true,
+    "p": 0.7785,
+    "design": "rct",
+    "ms": 6945
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.2672,
+    "design": "other",
+    "ms": 6967
+   }
+  },
+  {
+   "pmid": "18220654",
+   "gold": 0,
+   "title": "Peroxisome proliferator-activated receptor (PPAR) in metabolic syndrome and type 2 diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.6893,
+    "design": "review",
+    "ms": 6083
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.2165,
+    "design": "review",
+    "ms": 6055
+   }
+  },
+  {
+   "pmid": "11859274",
+   "gold": 0,
+   "title": "Impact of moderate aerobic exercise training on insulin sensitivity in type 2 diabetic men treated with oral hypoglycemi",
+   "base": {
+    "include": true,
+    "p": 0.8256,
+    "design": "rct",
+    "ms": 6045
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0013,
+    "design": "other",
+    "ms": 5921
+   }
+  },
+  {
+   "pmid": "20880279",
+   "gold": 0,
+   "title": "Cardiovascular fitness and quality of life in adolescents with type 1 or type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.6578,
+    "design": "rct",
+    "ms": 3240
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0006,
+    "design": "other",
+    "ms": 3275
+   }
+  },
+  {
+   "pmid": "11164325",
+   "gold": 0,
+   "title": "Patient concerns in their first year with type 2 diabetes: patient and practice nurse views.",
+   "base": {
+    "include": false,
+    "p": 0.2583,
+    "design": "review",
+    "ms": 3662
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0039,
+    "design": "other",
+    "ms": 3482
+   }
+  },
+  {
+   "pmid": "7675002",
+   "gold": 0,
+   "title": "[Urinary albumin excretion by patients with type 2 diabetes mellitus. Effect of blood pressure and metabolic regulation]",
+   "base": {
+    "include": false,
+    "p": 0.4465,
+    "design": "review",
+    "ms": 7505
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0007,
+    "design": "other",
+    "ms": 7377
+   }
+  },
+  {
+   "pmid": "12086940",
+   "gold": 0,
+   "title": "Adrenalectomy improves diabetes in A-ZIP/F-1 lipoatrophic mice by increasing both liver and muscle insulin sensitivity.",
+   "base": {
+    "include": false,
+    "p": 0.1457,
+    "design": "review",
+    "ms": 4483
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0028,
+    "design": "review",
+    "ms": 4646
+   }
+  },
+  {
+   "pmid": "12743462",
+   "gold": 0,
+   "title": "Relation between total homocysteine levels and beer intake in patients with diabetes mellitus Type 2.",
+   "base": {
+    "include": false,
+    "p": 0.4142,
+    "design": "rct",
+    "ms": 7538
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0195,
+    "design": "other",
+    "ms": 7542
+   }
+  },
+  {
+   "pmid": "19560716",
+   "gold": 0,
+   "title": "Postprandial walking is better for lowering the glycemic effect of dinner than pre-dinner exercise in type 2 diabetic in",
+   "base": {
+    "include": true,
+    "p": 0.6575,
+    "design": "rct",
+    "ms": 6670
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0391,
+    "design": "rct",
+    "ms": 6620
+   }
+  },
+  {
+   "pmid": "12822388",
+   "gold": 0,
+   "title": "[Glimepiride--an oral antidiabetic agent].",
+   "base": {
+    "include": true,
+    "p": 0.6677,
+    "design": "rct",
+    "ms": 4275
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.3016,
+    "design": "review",
+    "ms": 4223
+   }
+  },
+  {
+   "pmid": "21205505",
+   "gold": 0,
+   "title": "[Liraglutide and glimepiride on glycaemic control in type 2 diabetes in the Mexican cohort (LEAD 3)].",
+   "base": {
+    "include": true,
+    "p": 0.819,
+    "design": "rct",
+    "ms": 5858
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.3573,
+    "design": "rct",
+    "ms": 5483
+   }
+  },
+  {
+   "pmid": "20083961",
+   "gold": 0,
+   "title": "Effects of resistance or aerobic exercise training on interleukin-6, C-reactive protein, and body composition.",
+   "base": {
+    "include": true,
+    "p": 0.8357,
+    "design": "rct",
+    "ms": 7372
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0065,
+    "design": "rct",
+    "ms": 7366
+   }
+  },
+  {
+   "pmid": "19254484",
+   "gold": 0,
+   "title": "Blood glucose self-monitoring in type 2 diabetes: a randomised controlled trial.",
+   "base": {
+    "include": true,
+    "p": 0.8443,
+    "design": "rct",
+    "ms": 7429
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.6698,
+    "design": "rct",
+    "ms": 7373
+   }
+  },
+  {
+   "pmid": "11347746",
+   "gold": 0,
+   "title": "Lower-limb vascularization in diabetic patients. Assessment by thallium-201 scanning coupled with exercise myocardial sc",
+   "base": {
+    "include": true,
+    "p": 0.5913,
+    "design": "rct",
+    "ms": 5922
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0809,
+    "design": "review",
+    "ms": 5657
+   }
+  },
+  {
+   "pmid": "17078221",
+   "gold": 0,
+   "title": "[Lipid reducing and antioxidant action of mexicor in patients with diabetes mellitus type 2].",
+   "base": {
+    "include": true,
+    "p": 0.9346,
+    "design": "rct",
+    "ms": 3649
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.9593,
+    "design": "rct",
+    "ms": 3743
+   }
+  },
+  {
+   "pmid": "17041809",
+   "gold": 0,
+   "title": "The metabolic effects of long term exercise in Type 2 Diabetes patients.",
+   "base": {
+    "include": true,
+    "p": 0.8069,
+    "design": "rct",
+    "ms": 7335
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.4636,
+    "design": "review",
+    "ms": 7295
+   }
+  },
+  {
+   "pmid": "19252346",
+   "gold": 0,
+   "title": "Pioglitazone metabolic effect in metformin-intolerant obese patients treated with sibutramine.",
+   "base": {
+    "include": true,
+    "p": 0.8044,
+    "design": "rct",
+    "ms": 7394
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1875,
+    "design": "rct",
+    "ms": 7316
+   }
+  },
+  {
+   "pmid": "17929538",
+   "gold": 0,
+   "title": "[The effect of metformin on fasting and postprandial insulin secretion in obese patients with diabetes mellitus type 2].",
+   "base": {
+    "include": true,
+    "p": 0.8738,
+    "design": "rct",
+    "ms": 7310
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1961,
+    "design": "invitro",
+    "ms": 7298
+   }
+  },
+  {
+   "pmid": "18487474",
+   "gold": 0,
+   "title": "Increased daily walking improves lipid oxidation without changes in mitochondrial function in type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.615,
+    "design": "rct",
+    "ms": 6383
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1094,
+    "design": "review",
+    "ms": 6350
+   }
+  },
+  {
+   "pmid": "15620433",
+   "gold": 0,
+   "title": "Predictive clinical parameters for therapeutic efficacy of rosiglitazone in Korean type 2 diabetes mellitus.",
+   "base": {
+    "include": false,
+    "p": 0.281,
+    "design": "rct",
+    "ms": 7499
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1232,
+    "design": "rct",
+    "ms": 7326
+   }
+  },
+  {
+   "pmid": "18772488",
+   "gold": 0,
+   "title": "The dark side of testosterone deficiency: II. Type 2 diabetes and insulin resistance.",
+   "base": {
+    "include": false,
+    "p": 0.1946,
+    "design": "review",
+    "ms": 4555
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0005,
+    "design": "review",
+    "ms": 4404
+   }
+  },
+  {
+   "pmid": "7674869",
+   "gold": 0,
+   "title": "Effects of non-insulin-dependent diabetes on oxygen consumption during treadmill exercise.",
+   "base": {
+    "include": true,
+    "p": 0.8729,
+    "design": "rct",
+    "ms": 4719
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0065,
+    "design": "review",
+    "ms": 4703
+   }
+  },
+  {
+   "pmid": "9702435",
+   "gold": 0,
+   "title": "Role of orlistat in the treatment of obese patients with type 2 diabetes. A 1-year randomized double-blind study.",
+   "base": {
+    "include": true,
+    "p": 0.792,
+    "design": "rct",
+    "ms": 7379
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.7485,
+    "design": "rct",
+    "ms": 7351
+   }
+  },
+  {
+   "pmid": "10469863",
+   "gold": 0,
+   "title": "Clinical and biochemical characteristics of type 2 diabetic patients on continuous ambulatory peritoneal dialysis: relat",
+   "base": {
+    "include": true,
+    "p": 0.6318,
+    "design": "review",
+    "ms": 7382
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0391,
+    "design": "review",
+    "ms": 7281
+   }
+  },
+  {
+   "pmid": "20546264",
+   "gold": 0,
+   "title": "Striving for the impossible dream: a community-based multi-practice collaborative model of diabetes management.",
+   "base": {
+    "include": true,
+    "p": 0.5972,
+    "design": "review",
+    "ms": 7365
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0201,
+    "design": "review",
+    "ms": 7370
+   }
+  },
+  {
+   "pmid": "12145764",
+   "gold": 0,
+   "title": "Insulin resistance and atherosclerosis in diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.9159,
+    "design": "review",
+    "ms": 4357
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.4213,
+    "design": "other",
+    "ms": 4463
+   }
+  },
+  {
+   "pmid": "2010535",
+   "gold": 0,
+   "title": "Reduced capacity and affinity of skeletal muscle for insulin-mediated glucose uptake in noninsulin-dependent diabetic su",
+   "base": {
+    "include": false,
+    "p": 0.1263,
+    "design": "invitro",
+    "ms": 7385
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0005,
+    "design": "review",
+    "ms": 7335
+   }
+  },
+  {
+   "pmid": "8422777",
+   "gold": 0,
+   "title": "Intensive conventional insulin therapy for type II diabetes. Metabolic effects during a 6-mo outpatient trial.",
+   "base": {
+    "include": true,
+    "p": 0.8614,
+    "design": "rct",
+    "ms": 7595
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.8521,
+    "design": "rct",
+    "ms": 7578
+   }
+  },
+  {
+   "pmid": "18561513",
+   "gold": 0,
+   "title": "Novel combination treatment of type 2 diabetes DPP-4 inhibition + metformin.",
+   "base": {
+    "include": true,
+    "p": 0.5781,
+    "design": "rct",
+    "ms": 5658
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0407,
+    "design": "rct",
+    "ms": 5847
+   }
+  },
+  {
+   "pmid": "20821932",
+   "gold": 0,
+   "title": "Pioglitazone improves ventricular diastolic function in patients with diabetes mellitus: a tissue Doppler study.",
+   "base": {
+    "include": true,
+    "p": 0.7501,
+    "design": "rct",
+    "ms": 6077
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.7175,
+    "design": "review",
+    "ms": 5984
+   }
+  },
+  {
+   "pmid": "21040993",
+   "gold": 0,
+   "title": "The reliability and validity of the Japanese version of the Appraisal of Diabetes Scale for type 2 diabetes patients.",
+   "base": {
+    "include": true,
+    "p": 0.8262,
+    "design": "rct",
+    "ms": 5284
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0024,
+    "design": "other",
+    "ms": 5305
+   }
+  },
+  {
+   "pmid": "19701877",
+   "gold": 0,
+   "title": "Improved metabolic control after 12-week dietary intervention with low glycaemic isomalt in patients with type 2 diabete",
+   "base": {
+    "include": true,
+    "p": 0.5303,
+    "design": "rct",
+    "ms": 5902
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0181,
+    "design": "rct",
+    "ms": 6033
+   }
+  },
+  {
+   "pmid": "15993354",
+   "gold": 0,
+   "title": "Health-related quality of life in the VA Feasibility Study on glycemic control and complications in type 2 diabetes mell",
+   "base": {
+    "include": true,
+    "p": 0.853,
+    "design": "rct",
+    "ms": 6405
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.8571,
+    "design": "rct",
+    "ms": 6418
+   }
+  },
+  {
+   "pmid": "17554399",
+   "gold": 0,
+   "title": "Efficiency of vibration exercise for glycemic control in type 2 diabetes patients.",
+   "base": {
+    "include": true,
+    "p": 0.8803,
+    "design": "rct",
+    "ms": 4335
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1912,
+    "design": "review",
+    "ms": 4393
+   }
+  },
+  {
+   "pmid": "12804757",
+   "gold": 0,
+   "title": "Adiponectin represents an independent cardiovascular risk factor predicting serum HDL-cholesterol levels in type 2 diabe",
+   "base": {
+    "include": true,
+    "p": 0.9057,
+    "design": "rct",
+    "ms": 4010
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.903,
+    "design": "review",
+    "ms": 3962
+   }
+  },
+  {
+   "pmid": "17704031",
+   "gold": 0,
+   "title": "Short-term effectiveness of an individual counseling program for impaired fasting glucose and mild type 2 diabetes in Ja",
+   "base": {
+    "include": true,
+    "p": 0.8692,
+    "design": "rct",
+    "ms": 5842
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0397,
+    "design": "rct",
+    "ms": 5842
+   }
+  },
+  {
+   "pmid": "10229293",
+   "gold": 0,
+   "title": "Autonomic neuropathy in Type 2 diabetic patients is associated with hyperinsulinaemia and hypertriglyceridaemia.",
+   "base": {
+    "include": true,
+    "p": 0.806,
+    "design": "review",
+    "ms": 4576
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.5755,
+    "design": "review",
+    "ms": 4837
+   }
+  },
+  {
+   "pmid": "20553219",
+   "gold": 0,
+   "title": "Association of plasma leptin levels and insulin resistance in diabetic women: a cross-sectional analysis in an Iranian p",
+   "base": {
+    "include": true,
+    "p": 0.8194,
+    "design": "cohort",
+    "ms": 6444
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0016,
+    "design": "other",
+    "ms": 6413
+   }
+  },
+  {
+   "pmid": "8200993",
+   "gold": 0,
+   "title": "Increased epinephrine and skeletal muscle responses to hypoglycemia in non-insulin-dependent diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.9343,
+    "design": "rct",
+    "ms": 7456
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0539,
+    "design": "rct",
+    "ms": 7520
+   }
+  },
+  {
+   "pmid": "20540652",
+   "gold": 0,
+   "title": "Clinical effectiveness and safety evaluation of long-term pioglitazone treatment for erythropoietin responsiveness and i",
+   "base": {
+    "include": true,
+    "p": 0.9303,
+    "design": "rct",
+    "ms": 7652
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0671,
+    "design": "review",
+    "ms": 7562
+   }
+  },
+  {
+   "pmid": "15723895",
+   "gold": 0,
+   "title": "Evaluation of the UCL diabetes self-management programme (UCL-DSMP): a randomized controlled trial.",
+   "base": {
+    "include": true,
+    "p": 0.8335,
+    "design": "rct",
+    "ms": 2761
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0522,
+    "design": "rct",
+    "ms": 2695
+   }
+  },
+  {
+   "pmid": "18280440",
+   "gold": 0,
+   "title": "A comparative study of the glycemic control of various antidiabetic agents and the role of homocysteine in the therapy o",
+   "base": {
+    "include": false,
+    "p": 0.306,
+    "design": "review",
+    "ms": 6239
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0009,
+    "design": "review",
+    "ms": 6107
+   }
+  },
+  {
+   "pmid": "20937148",
+   "gold": 0,
+   "title": "Randomised controlled trial of an automated, interactive telephone intervention to improve type 2 diabetes self-manageme",
+   "base": {
+    "include": false,
+    "p": 0.3911,
+    "design": "rct",
+    "ms": 7401
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1157,
+    "design": "rct",
+    "ms": 7325
+   }
+  },
+  {
+   "pmid": "14584108",
+   "gold": 0,
+   "title": "Development and validation of a computerized exercise intervention program for patients with type 2 diabetes mellitus in",
+   "base": {
+    "include": true,
+    "p": 0.8237,
+    "design": "rct",
+    "ms": 4631
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0028,
+    "design": "review",
+    "ms": 4649
+   }
+  },
+  {
+   "pmid": "18333889",
+   "gold": 0,
+   "title": "Combination of the insulin sensitizer, pioglitazone, and the long-acting GLP-1 human analog, liraglutide, exerts potent ",
+   "base": {
+    "include": false,
+    "p": 0.4366,
+    "design": "rct",
+    "ms": 7601
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0963,
+    "design": "invitro",
+    "ms": 7577
+   }
+  },
+  {
+   "pmid": "9083705",
+   "gold": 0,
+   "title": "Acarbose: a review of US clinical experience.",
+   "base": {
+    "include": true,
+    "p": 0.779,
+    "design": "rct",
+    "ms": 4764
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.058,
+    "design": "review",
+    "ms": 4778
+   }
+  },
+  {
+   "pmid": "12036382",
+   "gold": 0,
+   "title": "Economic evaluation of pioglitazone hydrochloride in the management of type 2 diabetes mellitus in Canada.",
+   "base": {
+    "include": true,
+    "p": 0.8311,
+    "design": "rct",
+    "ms": 5863
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0458,
+    "design": "review",
+    "ms": 5866
+   }
+  },
+  {
+   "pmid": "7956628",
+   "gold": 0,
+   "title": "A telephone-delivered intervention for patients with NIDDM. Effect on coronary risk factors.",
+   "base": {
+    "include": true,
+    "p": 0.9034,
+    "design": "rct",
+    "ms": 7447
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.3417,
+    "design": "rct",
+    "ms": 7385
+   }
+  },
+  {
+   "pmid": "19509011",
+   "gold": 0,
+   "title": "Short-term aerobic exercise reduces arterial stiffness in older adults with type 2 diabetes, hypertension, and hyperchol",
+   "base": {
+    "include": true,
+    "p": 0.8687,
+    "design": "rct",
+    "ms": 5506
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1255,
+    "design": "rct",
+    "ms": 5471
+   }
+  },
+  {
+   "pmid": "16053338",
+   "gold": 0,
+   "title": "Thiazolidinediones and insulin: rationale for use and role of combination therapy in type 2 diabetes mellitus.",
+   "base": {
+    "include": false,
+    "p": 0.1879,
+    "design": "review",
+    "ms": 6091
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0007,
+    "design": "review",
+    "ms": 6102
+   }
+  },
+  {
+   "pmid": "3154615",
+   "gold": 0,
+   "title": "The effects of diet and exercise in the treatment of non-insulin dependent diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.8323,
+    "design": "rct",
+    "ms": 5105
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0311,
+    "design": "review",
+    "ms": 4959
+   }
+  },
+  {
+   "pmid": "19671306",
+   "gold": 0,
+   "title": "[Effects of Helicobacter pylori on blood glucose fluctuation in type 2 diabetic patients].",
+   "base": {
+    "include": true,
+    "p": 0.6798,
+    "design": "rct",
+    "ms": 7415
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.101,
+    "design": "other",
+    "ms": 7325
+   }
+  },
+  {
+   "pmid": "16936159",
+   "gold": 0,
+   "title": "Treating postprandial hyperglycemia does not appear to delay progression of early type 2 diabetes: the Early Diabetes In",
+   "base": {
+    "include": true,
+    "p": 0.7554,
+    "design": "rct",
+    "ms": 7447
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0616,
+    "design": "review",
+    "ms": 7365
+   }
+  },
+  {
+   "pmid": "20938636",
+   "gold": 0,
+   "title": "Impaired insulin-induced site-specific phosphorylation of TBC1 domain family, member 4 (TBC1D4) in skeletal muscle of ty",
+   "base": {
+    "include": true,
+    "p": 0.6587,
+    "design": "invitro",
+    "ms": 7443
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0913,
+    "design": "invitro",
+    "ms": 7341
+   }
+  },
+  {
+   "pmid": "12856082",
+   "gold": 0,
+   "title": "Meta-analysis of the effect of structured exercise training on cardiorespiratory fitness in Type 2 diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.9069,
+    "design": "rct",
+    "ms": 6415
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.4035,
+    "design": "review",
+    "ms": 6407
+   }
+  },
+  {
+   "pmid": "18589581",
+   "gold": 0,
+   "title": "[Factors associated with microalbuminuria in non-hypertensive type-2 diabetes patients].",
+   "base": {
+    "include": true,
+    "p": 0.9187,
+    "design": "review",
+    "ms": 5065
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0983,
+    "design": "review",
+    "ms": 5303
+   }
+  },
+  {
+   "pmid": "21111100",
+   "gold": 0,
+   "title": "Continuous glucose monitoring reveals different glycemic responses of moderate- vs high-carbohydrate lunch meals in peop",
+   "base": {
+    "include": false,
+    "p": 0.2515,
+    "design": "rct",
+    "ms": 4465
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0142,
+    "design": "rct",
+    "ms": 4517
+   }
+  },
+  {
+   "pmid": "9314011",
+   "gold": 0,
+   "title": "Lifestyle modifications for diabetes management.",
+   "base": {
+    "include": false,
+    "p": 0.1894,
+    "design": "review",
+    "ms": 2099
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0006,
+    "design": "other",
+    "ms": 2083
+   }
+  },
+  {
+   "pmid": "18502299",
+   "gold": 0,
+   "title": "Effect of intensive insulin therapy on beta-cell function and glycaemic control in patients with newly diagnosed type 2 ",
+   "base": {
+    "include": true,
+    "p": 0.7624,
+    "design": "rct",
+    "ms": 7665
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0457,
+    "design": "rct",
+    "ms": 7434
+   }
+  },
+  {
+   "pmid": "9243107",
+   "gold": 0,
+   "title": "Short-term oestrogen replacement therapy improves insulin resistance, lipids and fibrinolysis in postmenopausal women wi",
+   "base": {
+    "include": false,
+    "p": 0.1085,
+    "design": "rct",
+    "ms": 5881
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0678,
+    "design": "rct",
+    "ms": 5759
+   }
+  },
+  {
+   "pmid": "10076585",
+   "gold": 0,
+   "title": "New strategies for the treatment of type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.5398,
+    "design": "review",
+    "ms": 4049
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0207,
+    "design": "review",
+    "ms": 4053
+   }
+  },
+  {
+   "pmid": "19269054",
+   "gold": 0,
+   "title": "Polymorphism in resistin promoter region at -420 determines the serum resistin levels and may be a risk marker of stroke",
+   "base": {
+    "include": true,
+    "p": 0.6157,
+    "design": "review",
+    "ms": 5742
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0198,
+    "design": "review",
+    "ms": 5704
+   }
+  },
+  {
+   "pmid": "16377022",
+   "gold": 0,
+   "title": "Serum CRP levels are equally elevated in newly diagnosed type 2 diabetes and impaired glucose tolerance and related to a",
+   "base": {
+    "include": true,
+    "p": 0.8929,
+    "design": "review",
+    "ms": 7494
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0639,
+    "design": "review",
+    "ms": 7434
+   }
+  },
+  {
+   "pmid": "18160120",
+   "gold": 0,
+   "title": "2-year effects of pioglitazone add-on to sulfonylurea or metformin on oral glucose tolerance in patients with type 2 dia",
+   "base": {
+    "include": true,
+    "p": 0.8729,
+    "design": "rct",
+    "ms": 7372
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.9178,
+    "design": "review",
+    "ms": 7277
+   }
+  },
+  {
+   "pmid": "10641958",
+   "gold": 0,
+   "title": "The use of sulphonylureas in the elderly.",
+   "base": {
+    "include": true,
+    "p": 0.5681,
+    "design": "review",
+    "ms": 7356
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.2951,
+    "design": "review",
+    "ms": 7338
+   }
+  },
+  {
+   "pmid": "12126765",
+   "gold": 0,
+   "title": "The effect of high carbohydrate diet on glucose tolerance in patients with type 2 diabetes mellitus.",
+   "base": {
+    "include": false,
+    "p": 0.1967,
+    "design": "rct",
+    "ms": 4639
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0035,
+    "design": "review",
+    "ms": 4585
+   }
+  },
+  {
+   "pmid": "9451466",
+   "gold": 0,
+   "title": "Resistance training improves the metabolic profile in individuals with type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.8146,
+    "design": "rct",
+    "ms": 4643
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0729,
+    "design": "other",
+    "ms": 4954
+   }
+  },
+  {
+   "pmid": "16801588",
+   "gold": 0,
+   "title": "Use of HbA1c in predicting progression to diabetes in French men and women: data from an Epidemiological Study on the In",
+   "base": {
+    "include": true,
+    "p": 0.8363,
+    "design": "review",
+    "ms": 7537
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0393,
+    "design": "review",
+    "ms": 7569
+   }
+  },
+  {
+   "pmid": "8318506",
+   "gold": 0,
+   "title": "Lipoprotein compositional abnormalities and insulin resistance in type II diabetic patients with mild hyperlipidemia.",
+   "base": {
+    "include": true,
+    "p": 0.6443,
+    "design": "review",
+    "ms": 7557
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.002,
+    "design": "review",
+    "ms": 7374
+   }
+  },
+  {
+   "pmid": "2226390",
+   "gold": 0,
+   "title": "Personal models of diabetes and their relations to self-care activities.",
+   "base": {
+    "include": false,
+    "p": 0.2038,
+    "design": "review",
+    "ms": 3574
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0013,
+    "design": "other",
+    "ms": 3544
+   }
+  },
+  {
+   "pmid": "16154427",
+   "gold": 0,
+   "title": "Three measures of tumor necrosis factor alpha activity and insulin resistance in nonobese Japanese type 2 diabetic patie",
+   "base": {
+    "include": true,
+    "p": 0.5554,
+    "design": "review",
+    "ms": 5856
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0014,
+    "design": "review",
+    "ms": 5905
+   }
+  },
+  {
+   "pmid": "1547918",
+   "gold": 0,
+   "title": "Insulin resistance in type 2 (non-insulin-dependent) diabetic patients and their relatives is not associated with a defe",
+   "base": {
+    "include": false,
+    "p": 0.2217,
+    "design": "invitro",
+    "ms": 7354
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0318,
+    "design": "invitro",
+    "ms": 7305
+   }
+  },
+  {
+   "pmid": "11288046",
+   "gold": 0,
+   "title": "Effects of bezafibrate on insulin sensitivity and insulin secretion in non-obese Japanese type 2 diabetic patients.",
+   "base": {
+    "include": false,
+    "p": 0.4987,
+    "design": "rct",
+    "ms": 7420
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0081,
+    "design": "other",
+    "ms": 7325
+   }
+  },
+  {
+   "pmid": "15510531",
+   "gold": 0,
+   "title": "A nurse-coaching intervention for women with type 2 diabetes.",
+   "base": {
+    "include": true,
+    "p": 0.6482,
+    "design": "rct",
+    "ms": 4618
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0526,
+    "design": "rct",
+    "ms": 4611
+   }
+  },
+  {
+   "pmid": "8299486",
+   "gold": 0,
+   "title": "Benfluorex decreases insulin resistance and improves lipid profiles in obese type 2 diabetic patients.",
+   "base": {
+    "include": true,
+    "p": 0.5478,
+    "design": "rct",
+    "ms": 7565
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0195,
+    "design": "review",
+    "ms": 7435
+   }
+  },
+  {
+   "pmid": "9793597",
+   "gold": 0,
+   "title": "Glimepiride: role of a new sulfonylurea in the treatment of type 2 diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.8679,
+    "design": "review",
+    "ms": 7446
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.8509,
+    "design": "review",
+    "ms": 7285
+   }
+  },
+  {
+   "pmid": "11735096",
+   "gold": 0,
+   "title": "Serum phospholipid fatty acid composition and insulin action in type 2 diabetic patients.",
+   "base": {
+    "include": true,
+    "p": 0.8116,
+    "design": "invitro",
+    "ms": 7412
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0019,
+    "design": "review",
+    "ms": 7328
+   }
+  },
+  {
+   "pmid": "20616542",
+   "gold": 0,
+   "title": "Effect of diet intervention and oral zinc supplementation on metabolic control in Berardinelli-Seip syndrome.",
+   "base": {
+    "include": true,
+    "p": 0.7787,
+    "design": "rct",
+    "ms": 5479
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0654,
+    "design": "other",
+    "ms": 5483
+   }
+  },
+  {
+   "pmid": "18082007",
+   "gold": 0,
+   "title": "Translating a community-based motivational support program to increase physical activity among older adults with diabete",
+   "base": {
+    "include": true,
+    "p": 0.7174,
+    "design": "rct",
+    "ms": 5962
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0212,
+    "design": "other",
+    "ms": 5860
+   }
+  },
+  {
+   "pmid": "21424914",
+   "gold": 0,
+   "title": "The effects of rosiglitazone and metformin on inflammation and endothelial dysfunction in patients with type 2 diabetes ",
+   "base": {
+    "include": false,
+    "p": 0.0994,
+    "design": "rct",
+    "ms": 7310
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0046,
+    "design": "rct",
+    "ms": 7299
+   }
+  },
+  {
+   "pmid": "11448654",
+   "gold": 0,
+   "title": "Self-monitoring of blood glucose levels and glycemic control: the Northern California Kaiser Permanente Diabetes registr",
+   "base": {
+    "include": true,
+    "p": 0.9029,
+    "design": "cohort",
+    "ms": 6280
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0066,
+    "design": "cohort",
+    "ms": 6364
+   }
+  },
+  {
+   "pmid": "20923492",
+   "gold": 0,
+   "title": "Assessment of self-reported self-esteem in healthy and diabetic children and adolescents in Greece.",
+   "base": {
+    "include": false,
+    "p": 0.156,
+    "design": "review",
+    "ms": 5460
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0007,
+    "design": "other",
+    "ms": 5472
+   }
+  },
+  {
+   "pmid": "18519838",
+   "gold": 0,
+   "title": "Reducing global cardiovascular risk in patients with type 2 diabetes mellitus.",
+   "base": {
+    "include": true,
+    "p": 0.6676,
+    "design": "review",
+    "ms": 5315
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0224,
+    "design": "review",
+    "ms": 5407
+   }
+  },
+  {
+   "pmid": "20977575",
+   "gold": 0,
+   "title": "Bromocriptine: old drug, new formulation and new indication.",
+   "base": {
+    "include": false,
+    "p": 0.2873,
+    "design": "rct",
+    "ms": 5149
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0177,
+    "design": "review",
+    "ms": 4939
+   }
+  },
+  {
+   "pmid": "12424409",
+   "gold": 0,
+   "title": "Cardiac tests in asymptomatic type 2 diabetics.",
+   "base": {
+    "include": true,
+    "p": 0.594,
+    "design": "review",
+    "ms": 5746
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.1556,
+    "design": "review",
+    "ms": 5940
+   }
+  },
+  {
+   "pmid": "12453903",
+   "gold": 0,
+   "title": "Rosiglitazone but not metformin enhances insulin- and exercise-stimulated skeletal muscle glucose uptake in patients wit",
+   "base": {
+    "include": true,
+    "p": 0.8818,
+    "design": "rct",
+    "ms": 6005
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.5921,
+    "design": "rct",
+    "ms": 5885
+   }
+  },
+  {
+   "pmid": "19875553",
+   "gold": 0,
+   "title": "Self-monitoring of blood glucose as part of the integral care of type 2 diabetes.",
+   "base": {
+    "include": false,
+    "p": 0.421,
+    "design": "review",
+    "ms": 4785
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0009,
+    "design": "review",
+    "ms": 4645
+   }
+  },
+  {
+   "pmid": "17998764",
+   "gold": 0,
+   "title": "Low serum testosterone concentration in middle-aged men with type 2 diabetes.",
+   "base": {
+    "include": false,
+    "p": 0.4659,
+    "design": "review",
+    "ms": 5875
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0355,
+    "design": "other",
+    "ms": 5962
+   }
+  },
+  {
+   "pmid": "18693476",
+   "gold": 0,
+   "title": "Insulin resistance and impaired glucose tolerance in overweight and obese Costa Rican schoolchildren.",
+   "base": {
+    "include": false,
+    "p": 0.3053,
+    "design": "cohort",
+    "ms": 7586
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0006,
+    "design": "other",
+    "ms": 7579
+   }
+  },
+  {
+   "pmid": "12911864",
+   "gold": 0,
+   "title": "Effect of smoking on risk factors for cardiovascular disease in patients with diabetes mellitus and renal insufficiency.",
+   "base": {
+    "include": true,
+    "p": 0.7294,
+    "design": "rct",
+    "ms": 7608
+   },
+   "tuned": {
+    "include": true,
+    "p": 0.6617,
+    "design": "rct",
+    "ms": 7831
+   }
+  },
+  {
+   "pmid": "18475058",
+   "gold": 0,
+   "title": "Unmet needs among patients with type 2 diabetes and secondary failure to oral anti-diabetic agents.",
+   "base": {
+    "include": true,
+    "p": 0.6363,
+    "design": "review",
+    "ms": 6147
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0466,
+    "design": "review",
+    "ms": 5774
+   }
+  },
+  {
+   "pmid": "8048799",
+   "gold": 0,
+   "title": "Aerobic training and diabetic nephropathy in the obese Zucker rat.",
+   "base": {
+    "include": true,
+    "p": 0.7901,
+    "design": "rct",
+    "ms": 3706
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.0164,
+    "design": "rct",
+    "ms": 3744
+   }
+  },
+  {
+   "pmid": "19344229",
+   "gold": 0,
+   "title": "Concomitant reduction in low-density lipoprotein cholesterol and glycated hemoglobin with colesevelam hydrochloride in p",
+   "base": {
+    "include": true,
+    "p": 0.8668,
+    "design": "review",
+    "ms": 7468
+   },
+   "tuned": {
+    "include": false,
+    "p": 0.154,
+    "design": "review",
+    "ms": 7812
+   }
+  }
+ ]
+}
