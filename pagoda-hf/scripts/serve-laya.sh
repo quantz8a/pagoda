@@ -6,8 +6,17 @@
 #
 # 用法：在 pagoda-hf 目录下执行
 #   bash scripts/serve-laya.sh [--port 8081] [--smoke]
+#
+# 可选环境变量 PAGODA_CUBLAS_LIBDIR：指向与驱动同代的 cuBLAS 所在目录。
+# candle 运行时按 libcublas.so.12 动态加载，若系统默认路径里是更新代的库
+# （如 12.8）而驱动较旧（如 535 / CUDA 12.2），GEMM 会报
+# CUBLAS_STATUS_INVALID_VALUE；用该变量把配套版本前置即可。
 set -euo pipefail
 cd "$(dirname "$0")/.."   # 仓库 pagoda-hf/ 根目录
+
+if [ -n "${PAGODA_CUBLAS_LIBDIR:-}" ]; then
+    export LD_LIBRARY_PATH="$PAGODA_CUBLAS_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi   # 仓库 pagoda-hf/ 根目录
 
 PORT=8081
 REPO="convaiinnovations/laya"

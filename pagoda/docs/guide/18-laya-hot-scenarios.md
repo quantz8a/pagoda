@@ -122,3 +122,13 @@ HTTP 服务形态：`laya_server --port 8081`，`POST /decide` 收同样的 JSON
    官方 Python 靠 `tok.cls_token_id` 自动适配，Rust 端我们做了 token 名 fallback。
 4. 场景 4 的"耶机"是 unicode 转义笔误（应为"耳机"），模型照样判对了 refund——
    顺手当了一次鲁棒性测试。
+5. **GPU 版报 `CUBLAS_STATUS_INVALID_VALUE` 不一定是显存不够**——还可能是
+   cuBLAS 与驱动不配套。candle 在运行时才按 `libcublas.so.12` 这个名字动态加载，
+   soname 只带大版本号：12.8 的库配上 12.2 时代的驱动（如 535）能加载、能建
+   上下文、能拷显存，**但每一次 GEMM 都报 INVALID_VALUE**，非常具有迷惑性。
+   排障三步：
+   - `cargo run --release --features cuda --example cuda_smoke`
+     （建设备 → 拷显存 → GEMM → reduce 逐步定位，哪步挂了就是哪层的问题）；
+   - `nvidia-smi` 右上角 "CUDA Version" 看驱动代数，`ldconfig -p | grep cublas`
+     看系统里有几套 cuBLAS（注意 ollama 这类应用会自带一套新的）；
+   - `LD_LIBRARY_PATH=<与驱动同代的工具链 lib 目录>` 把配套版本前置，再跑。

@@ -14,6 +14,9 @@ nohup $BIN --port 31181 --model-dir $OUT > laya-31181.log 2>&1 &
 echo "laya tuned pid $!"
 
 echo "=== [2/4] student SGLang on :31102 ==="
+# hostbin 里是 g++/gcc -> g++-10/gcc-10 的 shim：sglang 的 JIT 内核用到了
+# C++20 <concepts>，系统默认 g++ 9 编不过；nvcc 会把 PATH 里第一个 g++
+# 当作 host 编译器，所以把 shim 目录放在 PATH 最前面。
 export PATH=$HOME/cuda12/hostbin:$HOME/cuda12/root/usr/local/cuda-12.8/bin:$PATH
 pids=$(ss -tlnp 2>/dev/null | grep ':31102' | grep -oP 'pid=\K[0-9]+' | head -1)
 [ -n "$pids" ] && kill $pids
