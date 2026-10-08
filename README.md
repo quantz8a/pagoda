@@ -46,7 +46,7 @@ cd pagoda-hf && bash scripts/verify-p1.sh --mirror   # 直连 HF 可去掉 --mir
 
 - 贡献指南（十分钟跑通 + PR 规范）：[`CONTRIBUTING.md`](CONTRIBUTING.md)
 - 首批可认领任务（难度 L0–L3 + 从哪下手 + 怎么自测）：[`GOOD_FIRST_ISSUES.md`](GOOD_FIRST_ISSUES.md)
-- 项目目标 → 四象限性能的公开路线图（可认领入口）：[`site/roadmap.html`](site/roadmap.html)
+- 项目目标 → 四象限性能的公开路线图（可认领入口）：[`https://quantz8a.github.io/pagoda/roadmap.html`](https://quantz8a.github.io/pagoda/roadmap.html)
 
 无需 GPU、无需联网：`cargo test --offline` 全绿就能开工。
 
