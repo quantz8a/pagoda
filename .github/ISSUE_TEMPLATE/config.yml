@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 贡献指南
+    url: https://github.com/quantz8a/pagoda/blob/main/CONTRIBUTING.md
+    about: 动手前先读：十分钟跑通 + PR 规范 + 代码约定
+  - name: 首批可认领任务
+    url: https://github.com/quantz8a/pagoda/blob/main/GOOD_FIRST_ISSUES.md
+    about: 难度 L0–L3 的任务清单（MM 处理器移植线 / 调度缓存 / 兼容生态 / 指标）

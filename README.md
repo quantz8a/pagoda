@@ -1,7 +1,7 @@
 <p align="center">
   <img src="assets/logo.png" alt="pagoda" width="560" />
 </p>
-<p align="center"><a href="https://github.com/quantz8a/pagoda/actions/workflows/ci.yml"><img src="https://github.com/quantz8a/pagoda/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <a href="https://crates.io/crates/pagoda"><img src="https://img.shields.io/crates/v/pagoda.svg" alt="crates.io" /></a> <a href="https://docs.rs/pagoda"><img src="https://docs.rs/pagoda/badge.svg" alt="docs.rs" /></a></p>
+<p align="center"><a href="https://github.com/quantz8a/pagoda/actions/workflows/ci.yml"><img src="https://github.com/quantz8a/pagoda/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <a href="https://crates.io/crates/pagoda"><img src="https://img.shields.io/crates/v/pagoda.svg" alt="crates.io" /></a> <a href="https://docs.rs/pagoda"><img src="https://docs.rs/pagoda/badge.svg" alt="docs.rs" /></a> <a href="https://github.com/quantz8a/pagoda/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22"><img src="https://img.shields.io/github/issues/quantz8a/pagoda/good%20first%20issue" alt="good first issues" /></a> <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/contributions-welcome-brightgreen" alt="contributions welcome" /></a></p>
 
 SGLang 架构思想的 Rust 重实现：零第三方依赖的 LLM 推理服务引擎，
 外加一个可插真实 HuggingFace 权重/分词器的姊妹 crate。
@@ -39,6 +39,16 @@ cd pagoda-hf && bash scripts/verify-p1.sh --mirror   # 直连 HF 可去掉 --mir
 - 架构设计与路线图：[`pagoda/docs/DESIGN.md`](pagoda/docs/DESIGN.md)
 - 与 SGLang / HF transformers 的实测对比：[`pagoda/docs/BENCHMARK.md`](pagoda/docs/BENCHMARK.md)
 - 卖点与差异化：[`pagoda/docs/SELLING-POINTS.md`](pagoda/docs/SELLING-POINTS.md)
+
+## 参与贡献
+
+想在社区里露一手？看这里：
+
+- 贡献指南（十分钟跑通 + PR 规范）：[`CONTRIBUTING.md`](CONTRIBUTING.md)
+- 首批可认领任务（难度 L0–L3 + 从哪下手 + 怎么自测）：[`GOOD_FIRST_ISSUES.md`](GOOD_FIRST_ISSUES.md)
+- 项目目标 → 四象限性能的公开路线图（可认领入口）：[`site/roadmap.html`](site/roadmap.html)
+
+无需 GPU、无需联网：`cargo test --offline` 全绿就能开工。
 
 ## License
 

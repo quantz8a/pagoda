@@ -1,0 +1,56 @@
+name: Good first issue · 认领一个上手任务
+description: 从 GOOD_FIRST_ISSUES.md 挑一个任务，或在下方描述你想做的入门改动。
+title: "[good-first-issue] "
+labels: ["good first issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        动手前先看 [`CONTRIBUTING.md`](https://github.com/quantz8a/pagoda/blob/main/CONTRIBUTING.md)
+        和 [`GOOD_FIRST_ISSUES.md`](https://github.com/quantz8a/pagoda/blob/main/GOOD_FIRST_ISSUES.md)。
+        无需 GPU、无需联网：`cargo test --offline` 全绿即可开工。
+  - type: input
+    id: summary
+    attributes:
+      label: 一句话任务
+      description: 例：移植 Qwen2-VL 图像处理器
+    validations:
+      required: true
+  - type: dropdown
+    id: difficulty
+    attributes:
+      label: 难度
+      options:
+        - L0
+        - L1
+        - L2
+        - L3
+    validations:
+      required: true
+  - type: dropdown
+    id: axis
+    attributes:
+      label: 驱动轴
+      description: 完成这件事主要推进哪条收入轴
+      options:
+        - TTFT
+        - Token/Watt
+        - MTBI
+        - Useful Life
+        - Revenue / AI Factory
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: 从哪下手
+      description: 文件路径 + 参考实现（越具体越容易被接）
+  - type: textarea
+    id: selftest
+    attributes:
+      label: 怎么自测
+      placeholder: cargo test --offline 里 <测试名>
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充背景（可选）

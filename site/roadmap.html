@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pagoda · 项目目标 → 四象限性能 · 公开路线图</title>
+<style>
+  :root{--bg:#080A0F;--panel:rgba(255,255,255,.022);--line:rgba(255,255,255,.085);--ink:#F1EEE6;--ink-soft:#D6D2C7;--muted:#9AA4B4;--faint:#626C7C;
+    --cin:#FF5A36;--jad:#36CC8C;--gold:#E8BC5C;--vio:#8F7FF2;--sky:#54C1EE;--vio-soft:#C9BFF8;}
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(900px 560px at 12% -8%,rgba(255,90,54,.13),transparent 60%),radial-gradient(1000px 620px at 100% 8%,rgba(54,204,140,.10),transparent 55%),var(--bg);color:var(--ink);font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;line-height:1.7}
+  .wrap{max-width:1120px;margin:0 auto;padding:48px 24px 80px}
+  h1{font-size:30px;margin:10px 0 6px;letter-spacing:-.01em}
+  h1 b{color:var(--jad)}
+  .eyebrow{color:var(--jad);font-size:13px;letter-spacing:.16em;text-transform:uppercase;font-weight:700}
+  .sub{color:var(--muted);font-size:15px;max-width:860px;margin:0}
+  a{color:inherit}
+  .toplinks{font-size:13px;color:var(--muted);margin:14px 0 30px;display:flex;gap:18px;flex-wrap:wrap}
+  .toplinks a{color:var(--sky)}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:28px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .kpi .ax{display:flex;align-items:center;gap:9px;font-weight:700}
+  .kpi .dot{width:9px;height:9px;border-radius:50%}
+  .kpi .bar{position:relative;height:7px;background:rgba(255,255,255,.06);border-radius:4px;margin:14px 0 8px;overflow:hidden}
+  .kpi .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:4px}
+  .kpi .bar .tgt{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);opacity:.7}
+  .kpi .meta{display:flex;justify-content:space-between;color:var(--muted);font-size:12px}
+  .kpi .fid{color:var(--faint);font-size:11px;margin-top:5px}
+  .grid{position:relative;display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:18px;overflow:hidden;margin-bottom:28px}
+  .bq{background:#0D1118;padding:22px 22px 18px;min-height:200px}
+  .bq:nth-child(1),.bq:nth-child(3){padding-right:96px}
+  .bq:nth-child(2),.bq:nth-child(4){padding-left:96px}
+  .bq .pillar{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);font-weight:700}
+  .bq h3{margin:4px 0 8px;font-size:17px}
+  .bq .metrics{color:var(--vio-soft);font-size:13px;font-weight:600;margin-bottom:12px}
+  .goal{display:flex;gap:8px;margin:6px 0;font-size:13px;color:var(--ink-soft)}
+  .goal code{color:var(--ink);font-size:12px}
+  .badge{font-size:11px;padding:1px 8px;border-radius:20px;font-weight:700;white-space:nowrap}
+  .b-done{color:var(--jad);border:1px solid rgba(54,204,140,.4);background:rgba(54,204,140,.14)}
+  .b-prog{color:var(--gold);border:1px solid rgba(232,188,92,.4);background:rgba(232,188,92,.14)}
+  .b-plan{color:var(--sky);border:1px solid rgba(84,193,238,.4);background:rgba(84,193,238,.13)}
+  .b-gap{color:var(--cin);border:1px solid rgba(255,90,54,.4);background:rgba(255,90,54,.14)}
+  .center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:134px;height:134px;border-radius:50%;background:radial-gradient(circle at 50% 32%,#141b28,#0a0f17);border:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:1px;color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.08em}
+  .center .big{color:var(--cin);font-size:14px}
+  .two{display:grid;grid-template-columns:1.15fr .85fr;gap:20px;align-items:start;margin-bottom:28px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px}
+  .panel h2{margin:0 0 4px;font-size:19px}
+  .panel .hint{color:var(--muted);font-size:12.5px;margin:0 0 16px}
+  svg{width:100%;height:auto;display:block}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--faint);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  code{color:var(--sky);font-family:Consolas,Menlo,monospace;font-size:12px}
+  .legend{display:flex;gap:18px;color:var(--muted);font-size:12px;margin-top:12px}
+  .legend .now{width:22px;border-top:2px solid var(--sky);display:inline-block;vertical-align:middle;margin-right:6px}
+  .legend .aim{width:22px;border-top:2px solid var(--jad);display:inline-block;vertical-align:middle;margin-right:6px}
+  .tasks{width:100%;border-collapse:collapse;font-size:13px}
+  .claim{display:inline-block;color:var(--jad);border:1px solid rgba(54,204,140,.4);border-radius:8px;padding:2px 9px;font-size:12px;font-weight:700;text-decoration:none}
+  .claim:hover{background:rgba(54,204,140,.12)}
+  .foot{color:var(--muted);font-size:12px;margin-top:28px;border-top:1px solid var(--line);padding-top:16px}
+  @media(max-width:900px){.kpis,.two{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}.bq{padding-right:22px!important;padding-left:22px!important}}
+  @media(max-width:560px){.kpis,.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap" id="root"></div>
+<script>
+(function () {
+  var TIER = { none:0, design:0.25, partial:0.5, done:0.75, verified:1.0 };
+  var WEIGHT = { P0:1.0, P1:0.75 };
+  var TARGET = { tl:0.9, tw:0.9, mt:0.95, ul:0.9 };
+  var FIDELITY = { tl:0.5, tw:0, mt:0.5, ul:0.75 };
+  var AXIS = {
+    tl:{label:"TTFT",color:"#FF5A36"}, tw:{label:"Token/Watt",color:"#E8BC5C"},
+    mt:{label:"MTBI",color:"#36CC8C"}, ul:{label:"Useful Life",color:"#54C1EE"}
+  };
+  var PILLARS = [
+    {k:"codesign",u:"EXTREME CO-DESIGN",s:"时延 × 能效",m:"TTFT · Token/Watt"},
+    {k:"scale",u:"SCALE & EXPERIENCE",s:"规模化 × 稳定",m:"TTFT · MTBI"},
+    {k:"cuda",u:"CUDA ECOSYSTEM",s:"即插即用",m:"Useful Life"},
+    {k:"demand",u:"DEMAND",s:"商业模型 · 收入",m:"Revenue"}
+  ];
+  var GOALS = [
+    {id:"FR-1", na:"前缀命中跳过 prefill", pi:"codesign", pr:"P0", st:"done", ax:["tl"]},
+    {id:"FR-2", na:"前缀物理零拷贝复用", pi:"codesign", pr:"P0", st:"done", ax:["tl","tw"]},
+    {id:"FR-3", na:"调度策略 FCFS/LongestPrefix/ShortestPrompt", pi:"scale", pr:"P0", st:"done", ax:["tl"]},
+    {id:"FR-4", na:"分页 KV + 写时复制", pi:"codesign", pr:"P0", st:"done", ax:["tw"]},
+    {id:"FR-5", na:"四轴收入指标进 /stats", pi:"demand", pr:"P0", st:"done", ax:["tw"]},
+    {id:"FR-6", na:"KV LRU 淘汰 + 压力自愈", pi:"scale", pr:"P1", st:"done", ax:["mt","ul"]},
+    {id:"FR-7", na:"确定性可复现", pi:"scale", pr:"P0", st:"done", ax:["mt"]},
+    {id:"FR-8", na:"请求级 fault isolation", pi:"demand", pr:"P1", st:"design", ax:["mt"]},
+    {id:"FR-9", na:"property-based 测试 / fuzz", pi:"demand", pr:"P1", st:"design", ax:["mt"]},
+    {id:"FR-10", na:"OpenAI 兼容 + DSL 兼容", pi:"cuda", pr:"P0", st:"done", ax:["ul"]},
+    {id:"FR-11", na:"可插拔后端 trait", pi:"cuda", pr:"P1", st:"partial", ax:["ul","tw"]},
+    {id:"FR-12", na:"兼容性回归测试", pi:"cuda", pr:"P1", st:"design", ax:["ul"]},
+    {id:"FR-13", na:"准入/排队/SLO 护栏", pi:"scale", pr:"P1", st:"partial", ax:["tl","mt"]},
+    {id:"NFR-1", na:"内存安全：无 unsafe", pi:"scale", pr:"P0", st:"verified", ax:["mt"]},
+    {id:"NFR-2", na:"零依赖 · 可离线构建", pi:"cuda", pr:"P0", st:"verified", ax:["ul"]},
+    {id:"P1", na:"真实 tokenizer + 权重端到端", pi:"cuda", pr:"P0", st:"verified", ax:["ul"]}
+  ];
+  var TASKS = [
+    {d:"L1", a:"TTFT", t:"移植 Qwen2-VL 图像处理器", w:"照 rs-mm/src/model/internvl.rs，参考 qwen_vl.py"},
+    {d:"L1", a:"TTFT", t:"移植 MiniCPM-V 图像处理器", w:"参考 minicpmv.py 的 slice 切分"},
+    {d:"L1", a:"Useful Life", t:"移植 LLaVA-1.5 图像处理器", w:"单图 resize 到固定 grid"},
+    {d:"L2", a:"Useful Life", t:"decode 接真实 PNG 解码", w:"rs-mm/src/common/decode.rs 目前只有 BMP"},
+    {d:"L1", a:"TTFT", t:"第 4 种调度策略", w:"engine.rs 的 SchedulePolicy"},
+    {d:"L1", a:"TTFT", t:"Radix 命中率单测扩展", w:"radix_cache.rs 补命中率断言"},
+    {d:"L2", a:"Useful Life", t:"evict_lru 非叶节点回收", w:"radix_cache.rs evict_lru 只回收叶子"},
+    {d:"L1", a:"Useful Life", t:"OpenAI 端点契约回归测试", w:"tests/system_tests.rs"},
+    {d:"L1", a:"Useful Life", t:"补一页 guide 文档", w:"docs/guide/ 任选机制"},
+    {d:"L2", a:"Token/Watt", t:"pagoda-hf 接一个新后端", w:"照 src/llama.rs"},
+    {d:"L1", a:"Revenue", t:"/stats 字段单测", w:"锁死 14 字段 + 4 派生 KPI"},
+    {d:"L2", a:"Token/Watt", t:"Token/Watt 真实度代理增强", w:"avg_forward_per_output_token 加权口径"}
+  ];
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];}); }
+  function badge(st){ var m={done:["b-done","已实现"],verified:["b-done","已验证"],partial:["b-prog","部分"],design:["b-plan","规划"]}; var x=m[st]||["b-gap","未做"]; return '<span class="badge '+x[0]+'">'+x[1]+'</span>'; }
+
+  function compute(){
+    var acc={tl:{s:0,w:0},tw:{s:0,w:0},mt:{s:0,w:0},ul:{s:0,w:0}};
+    GOALS.forEach(function(g){ var t=TIER[g.st]||0, w=WEIGHT[g.pr]||1;
+      g.ax.forEach(function(a){ acc[a].s+=t*w; acc[a].w+=w; }); });
+    var o={}; Object.keys(acc).forEach(function(a){ o[a]=acc[a].w?Math.round(acc[a].s/acc[a].w*100)/100:0; }); return o;
+  }
+
+  function radar(s){
+    var R=92,cx=260,cy=200,keys=["tl","tw","mt","ul"],dir=[[0,-1],[1,0],[0,1],[-1,0]];
+    function p(i,v){var r=R*v;return (cx+dir[i][0]*r)+","+(cy+dir[i][1]*r);}
+    var cur=keys.map(function(k,i){return p(i,s[k]);}).join(" ");
+    var tgt=keys.map(function(k,i){return p(i,TARGET[k]);}).join(" ");
+    var rings=[23,46,69,92].map(function(r){return '<circle cx="260" cy="200" r="'+r+'"/>';}).join("");
+    var dots=keys.map(function(k,i){var q=p(i,s[k]).split(",");return '<circle cx="'+q[0]+'" cy="'+q[1]+'" r="4" fill="#54C1EE"/>';}).join("");
+    var lab=['<text x="260" y="96" text-anchor="middle" fill="#F1EEE6" font-size="14" font-weight="700">TTFT</text><text x="260" y="118" text-anchor="middle" fill="#9AA4B4" font-size="11">'+s.tl+' → '+TARGET.tl+'</text>',
+      '<text x="366" y="196" text-anchor="start" fill="#F1EEE6" font-size="14" font-weight="700">Token/Watt</text><text x="366" y="212" text-anchor="start" fill="#9AA4B4" font-size="11">'+s.tw+' → '+TARGET.tw+'</text>',
+      '<text x="260" y="316" text-anchor="middle" fill="#F1EEE6" font-size="14" font-weight="700">MTBI</text><text x="260" y="332" text-anchor="middle" fill="#9AA4B4" font-size="11">'+s.mt+' → '+TARGET.mt+'</text>',
+      '<text x="156" y="196" text-anchor="end" fill="#F1EEE6" font-size="14" font-weight="700">Useful Life</text><text x="156" y="212" text-anchor="end" fill="#9AA4B4" font-size="11">'+s.ul+' → '+TARGET.ul+'</text>'].join("");
+    return '<svg viewBox="0 0 560 400"><g stroke="#212938" fill="none">'+rings+'<line x1="260" y1="108" x2="260" y2="292"/><line x1="168" y1="200" x2="352" y2="200"/></g>'+
+      '<polygon points="'+tgt+'" fill="rgba(54,204,140,.08)" stroke="#36CC8C" stroke-width="2"/>'+
+      '<polygon points="'+cur+'" fill="rgba(84,193,238,.14)" stroke="#54C1EE" stroke-width="2"/>'+dots+lab+'</svg>';
+  }
+
+  function claim(t){ return "https://github.com/quantz8a/pagoda/issues/new?template=good-first-issue.yml&labels=good+first+issue&title="+encodeURIComponent("[good-first-issue] "+t); }
+
+  function render(){
+    var s=compute();
+    var kpis=["tl","tw","mt","ul"].map(function(k){ var a=AXIS[k];
+      return '<div class="kpi"><div class="ax"><span class="dot" style="background:'+a.color+'"></span>'+a.label+'</div>'+
+      '<div class="bar"><i style="width:'+Math.round(s[k]*100)+'%;background:'+a.color+'"></i><span class="tgt" style="left:'+Math.round(TARGET[k]*100)+'%"></span></div>'+
+      '<div class="meta"><span>机制 '+Math.round(s[k]*100)+'%</span><span>'+Math.round(TARGET[k]*100)+'% 目标</span></div>'+
+      '<div class="fid">真实度 '+Math.round(FIDELITY[k]*100)+'%</div></div>'; }).join("");
+
+    var quads=PILLARS.map(function(p){ var gs=GOALS.filter(function(g){return g.pi===p.k;});
+      var rows=gs.map(function(g){return '<div class="goal"><code>'+g.id+'</code> '+esc(g.na)+' '+badge(g.st)+'</div>';}).join("");
+      return '<div class="bq"><div class="pillar">'+p.u+'</div><h3>'+p.s+'</h3><div class="metrics">'+p.m+'</div>'+rows+'</div>'; }).join("");
+
+    var led=GOALS.map(function(g){ var a=g.ax.map(function(x){return AXIS[x].label;}).join(" · ");
+      return '<tr><td><code>'+g.id+'</code> '+esc(g.na)+'</td><td>'+a+'</td><td>'+badge(g.st)+'</td></tr>'; }).join("");
+
+    var tasks=TASKS.map(function(x){ return '<tr><td><code>'+x.d+'</code></td><td>'+esc(x.t)+'</td><td>'+x.a+'</td><td class="w">'+esc(x.w)+'</td><td><a class="claim" href="'+claim(x.t)+'" target="_blank" rel="noreferrer">认领 →</a></td></tr>'; }).join("");
+
+    document.getElementById("root").innerHTML =
+      '<span class="eyebrow">COMPUTE IS REVENUE</span>'+
+      '<h1>项目目标 → <b>四象限性能</b> · 公开路线图</h1>'+
+      '<p class="sub">四轴分由 <code>GOALS</code> 算出来：轴分 = Σ(分档×权重)/Σ权重。分档 none 0 / design 0.25 / partial 0.5 / done 0.75 / verified 1.0；权重 P0=1 · P1=0.75。机制分看“能力件搭没搭”，真实度看“能否在真实负载下实测”。</p>'+
+      '<div class="toplinks"><a href="https://github.com/quantz8a/pagoda/blob/main/CONTRIBUTING.md">贡献指南</a><a href="https://github.com/quantz8a/pagoda/blob/main/GOOD_FIRST_ISSUES.md">首批任务清单</a><a href="https://github.com/quantz8a/pagoda">GitHub ↗</a></div>'+
+      '<div class="kpis">'+kpis+'</div>'+
+      '<div class="grid">'+quads+'<div class="center"><span class="big">AI FACTORY</span><span>COMPUTE</span><span>IS</span><span>REVENUE</span></div></div>'+
+      '<div class="two"><div class="panel"><h2>四轴落地度（机制分 现状 vs 目标）</h2><p class="hint">Token/Watt 机制分不低，但真实度=0（缺真实能耗基准）——这正是它“最弱”的原因。</p>'+radar(s)+
+      '<div class="legend"><span><span class="now"></span>现状</span><span><span class="aim"></span>目标</span></div></div>'+
+      '<div class="panel"><h2>FR/NFR 状态台账</h2><p class="hint">状态来自 <code>docs/REQUIREMENTS.md</code>。</p><table><thead><tr><th>目标</th><th>驱动轴</th><th>状态</th></tr></thead><tbody>'+led+'</tbody></table></div></div>'+
+      '<div class="panel"><h2>首批可认领任务</h2><p class="hint">难度 L0–L3；点「认领」会用一个预填好的 GitHub issue 表单直接开 issue。</p>'+
+      '<table class="tasks"><thead><tr><th>难度</th><th>任务</th><th>驱动轴</th><th>从哪下手</th><th></th></tr></thead><tbody>'+tasks+'</tbody></table></div>'+
+      '<p class="foot">数据源：<code>docs/REQUIREMENTS.md</code> + <code>P1-VERIFICATION.md</code>。改动状态只需改本页 <code>GOALS</code> 数组，分数自动重算。</p>';
+  }
+  render();
+})();
+</script>
+</body>
+</html>
