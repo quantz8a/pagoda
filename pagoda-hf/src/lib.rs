@@ -92,7 +92,10 @@ impl HfTokenizer {
 
     /// Download one file from a HuggingFace repo into the default HF cache.
     pub fn download(repo: &str, file: &str) -> Result<std::path::PathBuf> {
-        let api = hf_hub::api::sync::Api::new()
+        // ApiBuilder::from_env() (unlike Api::new()) honours HF_ENDPOINT,
+        // which is the only way to reach a mirror when huggingface.co is blocked.
+        let api = hf_hub::api::sync::ApiBuilder::from_env()
+            .build()
             .context("failed to initialise the HuggingFace cache")?;
         let api = api.model(repo.to_string());
         api.get(file)

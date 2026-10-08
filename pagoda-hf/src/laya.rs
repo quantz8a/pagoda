@@ -357,12 +357,22 @@ impl Laya {
             act2: linear(256, 2, vb.pp("act_head").pp("2"))?,
         };
 
+        // English checkpoint uses [CLS]/[SEP]/[PAD]/[MASK]; the multilingual
+        // (mmBERT) checkpoint names them <bos>/<eos>/<pad>/<mask> (per its
+        // tokenizer_config: cls=<bos>, sep=<eos>). Try English first.
         let (cls, sep, pad, mask) = {
-            let id = |t: &str| -> Result<u32> {
-                tok.token_to_id(t)
-                    .with_context(|| format!("tokenizer is missing {t}"))
+            let id = |cands: &[&str]| -> Result<u32> {
+                cands
+                    .iter()
+                    .find_map(|t| tok.token_to_id(t))
+                    .with_context(|| format!("tokenizer is missing any of {cands:?}"))
             };
-            (id("[CLS]")?, id("[SEP]")?, id("[PAD]")?, id("[MASK]")?)
+            (
+                id(&["[CLS]", "<bos>"])?,
+                id(&["[SEP]", "<eos>"])?,
+                id(&["[PAD]", "<pad>"])?,
+                id(&["[MASK]", "<mask>"])?,
+            )
         };
         Ok(Self {
             tok,
