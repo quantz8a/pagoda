@@ -1,0 +1,143 @@
+name: Claim bot
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue = context.payload.issue;
+            if (!issue || issue.pull_request) return;
+
+            const labels = (issue.labels || []).map((l) => l.name);
+            if (!labels.includes("good first issue")) return;
+
+            const sender = context.payload.sender || { login: "", type: "User" };
+            const claimLabel = labels.find((l) => l.startsWith("claimed:")) || "";
+
+            if (context.eventName === "issues" && context.payload.action === "opened") {
+              const welcome = [
+                "这条任务可以用两条简单指令认领：",
+                "",
+                "- 评论 `/claim`：自动标记 `claimed:@你`，并发送你的开工清单",
+                "- 评论 `/unclaim`：取消认领，把机会让给别人",
+                "",
+                "开工前先看 [CONTRIBUTING.md](https://github.com/" + owner + "/" + repo + "/blob/main/CONTRIBUTING.md)。",
+                "之后在 [GOOD_FIRST_ISSUES.md](https://github.com/" + owner + "/" + repo + "/blob/main/GOOD_FIRST_ISSUES.md) 找同批任务。"
+              ].join("\n");
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body: welcome
+              });
+              return;
+            }
+
+            if (context.eventName !== "issue_comment" || context.payload.action !== "created") return;
+            if (sender.type !== "User") return;
+
+            const user = sender.login;
+            const commentBody = (context.payload.comment && context.payload.comment.body) || "";
+            const lines = commentBody.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+            const wantClaim = lines.includes("/claim") || lines.includes("认领");
+            const wantUnclaim = lines.includes("/unclaim") || lines.includes("取消认领");
+
+            if (wantUnclaim) {
+              const mine = "claimed:" + user;
+              if (claimLabel !== mine) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  body: "@" + user + " 你还没有认领这条任务，所以无法取消。"
+                });
+                return;
+              }
+              await github.rest.issues.removeLabel({
+                owner,
+                repo,
+                issue_number: issue.number,
+                name: mine
+              });
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body: "✅ 已取消认领：@" + user + "。任务重新开放，欢迎下一位接手。"
+              });
+              return;
+            }
+
+            if (!wantClaim) return;
+
+            if (claimLabel) {
+              const holder = claimLabel.replace(/^claimed:/, "");
+              if (holder === user) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  body: "@" + user + " 你已经认领了这条任务，按上一条开工清单继续推进就好。"
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  body: "@" + user + " 这条任务已被 @" + holder + " 认领。先看看同批任务：https://github.com/" + owner + "/" + repo + "/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22"
+                });
+              }
+              return;
+            }
+
+            const createdLabel = "claimed:" + user;
+            try {
+              await github.rest.issues.createLabel({
+                owner,
+                repo,
+                name: createdLabel,
+                color: "0A8754",
+                description: "Claimed by @" + user
+              });
+            } catch (err) {
+              if (err.status !== 409) throw err;
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: issue.number,
+              labels: [createdLabel]
+            });
+
+            const checklist = [
+              "✅ 已认领：@" + user,
+              "",
+              "你的下一步：",
+              "1. Fork + clone，跑 `cargo test --offline` 确认全绿。",
+              "2. 开分支 `fix/issue-" + issue.number + "`。",
+              "3. 按 issue 里的“从哪下手”改，跑过“怎么自测”。",
+              "4. PR 标题带 `Closes #" + issue.number + "`，一次只做这一件事。",
+              "",
+              "卡住就把你本机跑的命令原样贴回 issue；忘了怎么下手就回看 [CONTRIBUTING.md](https://github.com/" + owner + "/" + repo + "/blob/main/CONTRIBUTING.md)。"
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issue.number,
+              body: checklist
+            });

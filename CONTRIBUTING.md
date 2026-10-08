@@ -20,6 +20,16 @@ cargo run --offline --bin pagoda -- sample -p "SGLang is a serving framework" --
 
 测试全绿=环境 OK，之后所有改动都以它为准。
 
+
+## 认领任务
+
+看到 `good first issue`，不需要等批准，直接在该 issue 下评论：
+
+- `/claim`：机器人把你的名字标成 `claimed:@你`，并发一条开工清单。
+- `/unclaim`：取消认领，把机会让给别人。
+
+一个任务同一时间只给一个人；被认领后入口会显示绿色标签，其他人去 [已开放任务](https://github.com/quantz8a/pagoda/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) 找下一条。
+
 ## 找活干：三条路径
 
 1. **修 Bug / 补测试**：看 `GOOD_FIRST_ISSUES.md`，或 GitHub 上 `good-first-issue`

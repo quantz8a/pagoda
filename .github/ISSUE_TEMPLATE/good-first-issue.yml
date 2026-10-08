@@ -8,7 +8,7 @@ body:
       value: |
         动手前先看 [`CONTRIBUTING.md`](https://github.com/quantz8a/pagoda/blob/main/CONTRIBUTING.md)
         和 [`GOOD_FIRST_ISSUES.md`](https://github.com/quantz8a/pagoda/blob/main/GOOD_FIRST_ISSUES.md)。
-        无需 GPU、无需联网：`cargo test --offline` 全绿即可开工。
+        无需 GPU、无需联网：`cargo test --offline` 全绿即可开工。评论 `/claim` 即可把任务锁定给你，评论 `/unclaim` 可取消。
   - type: input
     id: summary
     attributes:
