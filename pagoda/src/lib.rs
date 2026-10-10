@@ -14,6 +14,9 @@
 //! * [`model`]      — model backend trait + deterministic n-gram toy LM
 //! * [`tokenizer`]  — tokenizer trait + deterministic byte-level tokenizer
 //! * [`server`]     — minimal dependency-free HTTP serving frontend
+//! * [`pd`]         — Mooncake-style prefill/decode disaggregation: KV object
+//!   store (local + standalone HTTP daemon), content-hash bundle keys, and the
+//!   engine-side `prefill_only` / `decode_from_kv` halves
 //!
 //! The implementation deliberately keeps external dependencies to zero so the
 //! whole runtime compiles and runs entirely offline. See `docs/DESIGN.md` for
@@ -21,6 +24,7 @@
 
 #![allow(dead_code)]
 
+pub mod actor;
 pub mod apc;
 pub mod dsl;
 pub mod engine;
@@ -29,6 +33,7 @@ pub mod http_client;
 pub mod json;
 pub mod kv_cache;
 pub mod model;
+pub mod pd;
 pub mod radix_cache;
 pub mod rng;
 pub mod sampler;
@@ -43,6 +48,7 @@ pub use engine::{CacheBackend, CheckpointId, Engine, EngineConfig, EngineStats, 
 pub use grammar::{mask_logits, ByteRegex, Grammar};
 pub use kv_cache::{BlockId, PagedKvCache};
 pub use model::{ModelEngine, ModelSession, NGramModel};
+pub use pd::{KvStore, LocalStore, PdError, PdRole, PrefillReceipt};
 pub use radix_cache::RadixCache;
 pub use sampler::Sampler;
 pub use spec::{FinishReason, GenerationOutput, RejectReason, SamplingParams, TokenId, WriteRequest};

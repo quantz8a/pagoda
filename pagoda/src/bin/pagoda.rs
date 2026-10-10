@@ -6,11 +6,15 @@
 //! * `sample`  — offline generation (repeat a prompt to show prefix caching)
 //! * `program` — run a canned SGLang-style DSL program
 //! * `serve`   — start the minimal HTTP serving frontend
+//! * `store`   — run the standalone KV object store for PD disaggregation
 
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
-use pagoda::{CacheBackend, EngineConfig, Program, SamplingParams, SchedulePolicy, ToyEngine, WriteRequest};
+use pagoda::{
+    pd, CacheBackend, EngineConfig, PdRole, Program, SamplingParams, SchedulePolicy, ToyEngine,
+    WriteRequest,
+};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -26,6 +30,8 @@ fn main() -> ExitCode {
         "sample" => sample(&rest),
         "program" => program(),
         "serve" => serve(&rest),
+        "store" => store(&rest),
+        "route" => route(&rest),
         "help" | "-h" | "--help" => {
             print_usage();
             ExitCode::SUCCESS
@@ -45,9 +51,26 @@ fn print_usage() {
     println!("  pagoda sample -p \"prompt\" [--max-tokens N] [--temperature F] [--repeat N]");
     println!("  pagoda program");
     println!("  pagoda serve   [--port 8080] [--addr 127.0.0.1] [--upstream http://host:port]");
+    println!("                                 (comma-separated list = prefix-affine worker pool)");
     println!("                 [--route dept=http://host:port]   (repeatable; Laya picks the upstream)");
     println!("                 [--laya-url http://host:port] [--laya-shadow] [--laya-required]");
     println!("                 [--churn-threshold 0.5] [--min-confidence 0.0]");
+    println!("                 [--role unified|prefill|decode] [--store http://host:port]");
+    println!("                 [--concurrent]  (unified role: scheduler actor, requests overlap;");
+    println!("                                 combines with --laya-url triage)");
+    println!("                 [--prefill-url http://host:port]  (decode role: conductor)");
+    println!("  pagoda store   [--port 9100] [--addr 127.0.0.1] [--max-bytes 67108864]");
+    println!("                 [--max-age-secs N]  (entry TTL; expired bundles count as misses)");
+    println!("  pagoda route   [--port 8000] --prefill-url http://host:port");
+    println!("                 --decode-url http://host:port   (repeatable; prefix-affinity)");
+    println!("                 [--laya-url http://host:port] [--laya-shadow] [--laya-required]");
+    println!("                 [--churn-threshold 0.5] [--min-confidence 0.0]");
+    println!();
+    println!("  PD disaggregation (Mooncake-style):");
+    println!("    pagoda store --port 9100");
+    println!("    pagoda serve --port 8001 --role prefill --store http://127.0.0.1:9100");
+    println!("    pagoda serve --port 8002 --role decode  --store http://127.0.0.1:9100 \\");
+    println!("                --prefill-url http://127.0.0.1:8001");
 }
 
 fn cfg() -> EngineConfig {
@@ -124,13 +147,17 @@ fn sample(args: &[String]) -> ExitCode {
         s.prefill_chunks
     );
     println!(
-        "revenue: compute_saved={} graft_saved={} prefill_skip={:.2} avg_forward/token={:.2} kv_util={:.2} decode_batch={:.2}x output_tokens={}",
+        "revenue: compute_saved={} graft_saved={} prefill_skip={:.2} avg_forward/token={:.2} kv_util={:.2} decode_batch={:.2}x forwards_saved={} aborted={} output_tokens={}",
         s.compute_saved_tokens(),
         s.model_graft_tokens,
         s.prefill_skip_ratio(),
         s.avg_forward_per_output_token(),
         s.kv_utilization(),
         s.decode_batch_factor(),
+        s.compute_saved_tokens()
+            + s.model_graft_tokens
+            + s.total_decode_steps.saturating_sub(s.total_decode_calls),
+        s.aborted_requests,
         s.total_output_tokens
     );
     ExitCode::SUCCESS
@@ -186,6 +213,10 @@ fn serve(args: &[String]) -> ExitCode {
     let mut churn_threshold = 0.5f64;
     let mut min_confidence = 0.0f64;
     let mut routes: Vec<(String, String)> = Vec::new();
+    let mut role = PdRole::Unified;
+    let mut store_url: Option<String> = None;
+    let mut prefill_url: Option<String> = None;
+    let mut concurrent = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -213,6 +244,21 @@ fn serve(args: &[String]) -> ExitCode {
             "--min-confidence" => {
                 min_confidence = it.next().and_then(|v| v.parse().ok()).unwrap_or(min_confidence)
             }
+            "--role" => {
+                let v = it.next().cloned().unwrap_or_default();
+                role = match v.as_str() {
+                    "unified" => PdRole::Unified,
+                    "prefill" => PdRole::Prefill,
+                    "decode" => PdRole::Decode,
+                    _ => {
+                        eprintln!("bad --role {v:?} (want unified|prefill|decode)");
+                        return ExitCode::FAILURE;
+                    }
+                };
+            }
+            "--store" => store_url = it.next().cloned(),
+            "--concurrent" => concurrent = true,
+            "--prefill-url" => prefill_url = it.next().cloned(),
             other => {
                 eprintln!("unknown flag: {other}");
                 return ExitCode::FAILURE;
@@ -262,11 +308,163 @@ fn serve(args: &[String]) -> ExitCode {
         },
         None => None,
     };
-    let engine = Arc::new(Mutex::new(ToyEngine::toy(cfg())));
-    match pagoda::server::run_with_triage(engine, &format!("{addr}:{port}"), proxy, triage) {
+    let mut engine = ToyEngine::toy(cfg());
+    if role != PdRole::Unified || store_url.is_some() {
+        let Some(url) = store_url.as_deref() else {
+            eprintln!("--role prefill|decode requires --store http://host:port");
+            return ExitCode::FAILURE;
+        };
+        let Some(store) = pd::HttpStore::from_url(url) else {
+            eprintln!("bad --store {url:?} (want http://host[:port])");
+            return ExitCode::FAILURE;
+        };
+        engine.enable_pd(role, Arc::new(store));
+        eprintln!("pd role: {} (kv store: {url})", role.as_str());
+    }
+    let conductor = match prefill_url.as_deref() {
+        Some(url) => match pagoda::server::Conductor::from_url(url) {
+            Some(c) => Some(Arc::new(c)),
+            None => {
+                eprintln!("bad --prefill-url {url:?} (want http://host[:port])");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+    if concurrent {
+        if role != PdRole::Unified
+            || store_url.is_some()
+            || prefill_url.is_some()
+            || upstream.is_some()
+        {
+            eprintln!("--concurrent serves the unified role only (no --role/--store/--prefill-url/--upstream; --laya-url is allowed)");
+            return ExitCode::FAILURE;
+        }
+        return match pagoda::server::run_concurrent(engine, &format!("{addr}:{port}"), triage) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("server error: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let engine = Arc::new(Mutex::new(engine));
+    match pagoda::server::run_full(
+        engine,
+        &format!("{addr}:{port}"),
+        proxy,
+        triage,
+        conductor,
+    ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("server error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn store(args: &[String]) -> ExitCode {
+    let mut port = 9100u16;
+    let mut addr = "127.0.0.1".to_string();
+    let mut max_bytes = 64usize << 20;
+    let mut max_age: Option<std::time::Duration> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--port" => port = it.next().and_then(|v| v.parse().ok()).unwrap_or(port),
+            "--addr" => addr = it.next().cloned().unwrap_or(addr),
+            "--max-bytes" => {
+                max_bytes = it.next().and_then(|v| v.parse().ok()).unwrap_or(max_bytes)
+            }
+            "--max-age-secs" => {
+                let secs: f64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+                max_age = (secs > 0.0).then(|| std::time::Duration::from_secs_f64(secs));
+            }
+            other => {
+                eprintln!("unknown flag: {other}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    match pd::run_store(&format!("{addr}:{port}"), max_bytes, max_age) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("store error: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn route(args: &[String]) -> ExitCode {
+    let mut port = 8000u16;
+    let mut addr = "127.0.0.1".to_string();
+    let mut prefill_url: Option<String> = None;
+    let mut decode_urls: Vec<String> = Vec::new();
+    let mut laya: Option<String> = None;
+    let mut laya_shadow = false;
+    let mut laya_required = false;
+    let mut churn_threshold = 0.5f64;
+    let mut min_confidence = 0.0f64;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--port" => port = it.next().and_then(|v| v.parse().ok()).unwrap_or(port),
+            "--addr" => addr = it.next().cloned().unwrap_or(addr),
+            "--prefill-url" => prefill_url = it.next().cloned(),
+            "--decode-url" => {
+                if let Some(u) = it.next() {
+                    decode_urls.push(u.clone());
+                }
+            }
+            "--laya-url" => laya = it.next().cloned(),
+            "--laya-shadow" => laya_shadow = true,
+            "--laya-required" => laya_required = true,
+            "--churn-threshold" => {
+                churn_threshold = it.next().and_then(|v| v.parse().ok()).unwrap_or(churn_threshold)
+            }
+            "--min-confidence" => {
+                min_confidence = it.next().and_then(|v| v.parse().ok()).unwrap_or(min_confidence)
+            }
+            other => {
+                eprintln!("unknown flag: {other}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let Some(prefill_url) = prefill_url else {
+        eprintln!("route requires --prefill-url http://host:port");
+        return ExitCode::FAILURE;
+    };
+    if decode_urls.is_empty() {
+        eprintln!("route requires at least one --decode-url http://host:port");
+        return ExitCode::FAILURE;
+    }
+    let triage = match laya.as_deref() {
+        Some(url) => match pagoda::triage::Triage::from_url(url) {
+            Some(mut t) => {
+                t.shadow = laya_shadow;
+                t.required = laya_required;
+                t.churn_threshold = churn_threshold;
+                t.min_confidence = min_confidence;
+                Some(Arc::new(t))
+            }
+            None => {
+                eprintln!("bad --laya-url {url:?} (want http://host[:port])");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+    match pd::run_router(
+        &format!("{addr}:{port}"),
+        &prefill_url,
+        &decode_urls,
+        triage,
+    ) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("router error: {e}");
             ExitCode::FAILURE
         }
     }

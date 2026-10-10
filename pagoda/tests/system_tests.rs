@@ -747,3 +747,66 @@ fn http_triage_routes_by_department_to_dedicated_upstream() {
         stats.contains(&format!("billing")), "routes visible: {stats}"
     );
 }
+
+/// Multi-upstream prefix-affine pool: the same prompt sticks to the worker
+/// that served its prefix, traffic spreads across the pool, and /stats
+/// exposes per-worker routed counts.
+#[test]
+fn http_proxy_prefix_pool_sticks_and_spreads() {
+    let up_a = free_port();
+    let recv_a = Arc::new(Mutex::new(Vec::new()));
+    mock_upstream(up_a, Arc::clone(&recv_a));
+    let up_b = free_port();
+    let recv_b = Arc::new(Mutex::new(Vec::new()));
+    mock_upstream(up_b, Arc::clone(&recv_b));
+    wait_until_ready(up_a);
+    wait_until_ready(up_b);
+
+    let engine = ToyEngine::toy(EngineConfig::default());
+    let proxy = server::Proxy::from_url(&format!(
+        "http://127.0.0.1:{up_a},http://127.0.0.1:{up_b}"
+    ))
+    .expect("proxy pool");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    std::thread::spawn(move || {
+        server::run_full(
+            Arc::new(Mutex::new(engine)),
+            &addr,
+            Some(Arc::new(proxy)),
+            None,
+            None,
+        )
+        .expect("server run");
+    });
+    wait_until_ready(port);
+
+    let alpha = r#"{"text":"alpha shared prefix prompt","sampling_params":{"max_tokens":1}}"#;
+    for _ in 0..2 {
+        let (status, _) = http(port, "POST", "/generate", Some(alpha));
+        assert_eq!(status, 200);
+    }
+    let beta = r#"{"text":"beta different prompt entirely","sampling_params":{"max_tokens":1}}"#;
+    let (status, _) = http(port, "POST", "/generate", Some(beta));
+    assert_eq!(status, 200);
+
+    let a = recv_a.lock().unwrap().len();
+    let b = recv_b.lock().unwrap().len();
+    assert_eq!(a + b, 3, "all three forwarded: a={a} b={b}");
+    assert!(
+        a == 2 || b == 2,
+        "the repeated prompt stuck to one worker: a={a} b={b}"
+    );
+
+    let (_, stats) = http(port, "GET", "/stats", None);
+    let v = pagoda::json::parse(&stats).unwrap();
+    let Some(pagoda::json::Value::Array(pool)) = v.get("upstream_pool") else {
+        panic!("upstream_pool missing: {stats}")
+    };
+    assert_eq!(pool.len(), 2, "{stats}");
+    let Some(pagoda::json::Value::Array(routed)) = v.get("upstream_pool_routed") else {
+        panic!("upstream_pool_routed missing: {stats}")
+    };
+    let total: f64 = routed.iter().filter_map(|n| n.as_f64()).sum();
+    assert_eq!(total, 3.0, "{stats}");
+}

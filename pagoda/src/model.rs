@@ -78,6 +78,17 @@ pub trait ModelEngine: Send + Sync {
     fn begin_session(&self) -> Option<Box<dyn ModelSession>> {
         None
     }
+
+    /// Rebuild a decode session covering `tokens` from a KV payload produced
+    /// by [`ModelSession::export_kv`] on a prefill worker (the decode half of
+    /// PD disaggregation, see [`crate::pd`]). The returned session must report
+    /// `context_len() == tokens.len()` and replay the prefill worker's
+    /// last-position logits on an empty feed, so the decode loop's first
+    /// sample is bit-identical to a unified run. Default `None`: no portable
+    /// KV; the engine decodes with the stateless/fresh-session path.
+    fn import_session(&self, _tokens: &[u32], _kv: &[u8]) -> Option<Box<dyn ModelSession>> {
+        None
+    }
 }
 
 /// A stateful, per-sequence decode session backed by a real KV cache.
@@ -115,6 +126,15 @@ pub trait ModelSession: Send {
     /// cache cannot be snapshotted keep the default (`None`); the engine then
     /// falls back to a fresh session that replays the prefix.
     fn fork(&self) -> Option<Box<dyn ModelSession>> {
+        None
+    }
+
+    /// Serialize this session's KV state for cross-process transfer (the
+    /// prefill half of PD disaggregation, see [`crate::pd`]). The decode
+    /// worker rebuilds an equivalent session via
+    /// [`ModelEngine::import_session`]. Default `None`: the KV is not
+    /// portable, and the decode worker falls back to replaying the prompt.
+    fn export_kv(&self) -> Option<Vec<u8>> {
         None
     }
 }
@@ -269,4 +289,3 @@ search. Sampling controls temperature and top p to trade quality and diversity. 
 The server exposes OpenAI compatible chat completions and a native generate \
 endpoint. Reliability comes from metrics and structured logging. \
 ";
-

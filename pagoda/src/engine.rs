@@ -4,12 +4,14 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
+use std::sync::{mpsc, Arc};
 
 use crate::apc::ApcCache;
 use crate::dsl::{Op, Program, StreamResult};
 use crate::grammar::mask_logits;
 use crate::kv_cache::{BlockId, PagedKvCache};
 use crate::model::{ModelEngine, ModelSession, NGramModel};
+use crate::pd::{self, KvStore, PdError, PdRole, PrefillReceipt};
 use crate::radix_cache::{KvSlot, RadixCache};
 use crate::sampler::{log_softmax, Sampler};
 use crate::spec::{
@@ -111,7 +113,19 @@ pub struct Engine<M: ModelEngine, T: Tokenizer> {
     total_output_tokens: u64,
     total_faults: u64,
     total_rejected: u64,
+    total_aborted: u64,
     total_checkpoint_hits: u64,
+    /// PD-disaggregation wiring; `None` keeps the unified prefill+decode path.
+    pd: Option<EnginePd>,
+    pd_prefill_requests: u64,
+    pd_decode_requests: u64,
+    pd_kv_bytes: u64,
+}
+
+/// PD role plus the KV object store this worker publishes to / pulls from.
+struct EnginePd {
+    role: PdRole,
+    store: Arc<dyn KvStore>,
 }
 
 /// Handle to a pinned KV checkpoint: a materialized prompt prefix that later
@@ -156,6 +170,22 @@ struct Seq {
     session: Option<Box<dyn ModelSession>>,
 }
 
+/// Scheduler state threaded through [Engine::drain_step]: the waiting queue
+/// (prompts still being materialized), the ready queue (prefilled, awaiting
+/// decode admission), and the active decode batch. [Engine::drain] uses one
+/// per fixed batch; the actor loop keeps a single long-lived instance.
+struct DrainState {
+    waiting: VecDeque<Seq>,
+    ready: VecDeque<Seq>,
+    active: Vec<Seq>,
+}
+
+impl DrainState {
+    fn is_idle(&self) -> bool {
+        self.waiting.is_empty() && self.ready.is_empty() && self.active.is_empty()
+    }
+}
+
 enum Advance {
     Running(Seq),
     Done(GenerationOutput),
@@ -195,7 +225,12 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
             total_output_tokens: 0,
             total_faults: 0,
             total_rejected: 0,
+            total_aborted: 0,
             total_checkpoint_hits: 0,
+            pd: None,
+            pd_prefill_requests: 0,
+            pd_decode_requests: 0,
+            pd_kv_bytes: 0,
         }
     }
 
@@ -229,14 +264,20 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
             kv_free_blocks: self.kv.num_free_blocks(),
             kv_allocations: self.kv.num_allocations(),
             kv_frees: self.kv.num_frees(),
+            kv_block_size: self.kv.block_size(),
             prefill_chunks: self.total_prefill_chunks,
             total_prompt_tokens: self.total_prompt_tokens,
             total_prefill_tokens: self.total_prefill_tokens,
             total_output_tokens: self.total_output_tokens,
             faulted_requests: self.total_faults,
             rejected_requests: self.total_rejected,
+            aborted_requests: self.total_aborted,
             active_checkpoints: self.checkpoints.len(),
             checkpoint_hit_tokens: self.total_checkpoint_hits,
+            pd_role: self.pd_role(),
+            pd_prefill_requests: self.pd_prefill_requests,
+            pd_decode_requests: self.pd_decode_requests,
+            pd_kv_bytes: self.pd_kv_bytes,
         }
     }
 
@@ -275,25 +316,53 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
                 Err(rejected) => outputs.push(rejected),
             }
         }
-        self.drain(waiting, outputs)
+        self.drain(waiting, outputs, None)
     }
 
     /// Continuous-batching loop: prefill waiting sequences under the per-step
     /// token budget, decode one token for every ready sequence, until both the
     /// waiting queue and the decode batch drain.
+    /// `sink`, when set, fires per sampled token with `(seq_id, decoded
+    /// piece)` — the PD streaming path relays these as SSE frames.
     fn drain(
         &mut self,
-        mut waiting: VecDeque<Seq>,
+        waiting: VecDeque<Seq>,
         mut outputs: Vec<GenerationOutput>,
+        mut sink: Option<&mut dyn FnMut(usize, &str)>,
     ) -> Vec<GenerationOutput> {
-        let mut ready: VecDeque<Seq> = VecDeque::new();
-        let mut active: Vec<Seq> = Vec::new();
+        let mut state = DrainState {
+            waiting,
+            ready: VecDeque::new(),
+            active: Vec::new(),
+        };
+        while !state.is_idle() {
+            let step_outputs = self.drain_step(&mut state, &mut sink);
+            outputs.extend(step_outputs);
+        }
+        outputs
+    }
 
-        loop {
+    /// One scheduler iteration: a chunked-prefill pass under the per-step
+    /// token budget, admission of prefilled sequences into the decode batch,
+    /// then one decode step for every active sequence. Returns the outputs
+    /// that finished during this step. Shared by [`Engine::drain`] (fixed
+    /// batch) and the actor loop (live submissions).
+    fn drain_step(
+        &mut self,
+        state: &mut DrainState,
+        sink: &mut Option<&mut dyn FnMut(usize, &str)>,
+    ) -> Vec<GenerationOutput> {
+        let DrainState {
+            waiting,
+            ready,
+            active,
+        } = state;
+        let mut outputs: Vec<GenerationOutput> = Vec::new();
+        {
             // Prefill phase: spend the per-step token budget.
             let mut budget = self.max_prefill_tokens_per_step;
             while budget > 0 {
-                let mut seq = match pop_next(&mut waiting, self.config.schedule_policy) {
+                let mut seq = match pop_next(waiting, self.config.schedule_policy) {
                     Some(s) => s,
                     None => break,
                 };
@@ -322,7 +391,7 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
             }
 
             if active.is_empty() && ready.is_empty() && waiting.is_empty() {
-                break;
+                return outputs;
             }
 
             // Decode phase: one token for every ready sequence. Sequences
@@ -440,12 +509,12 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
                         }
                     }
                 };
-                match self.advance_with_logits(seq, logits) {
+                match self.advance_with_logits(seq, logits, sink) {
                     Advance::Running(s) => next.push(s),
                     Advance::Done(out) => outputs.push(out),
                 }
             }
-            active = next;
+            *active = next;
         }
         outputs
     }
@@ -555,6 +624,192 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
         true
     }
 
+    // --- PD disaggregation (Mooncake-style, see crate::pd) -------------------
+
+    /// Give this engine a PD role and the KV object store prefill workers
+    /// publish to and decode workers pull from.
+    pub fn enable_pd(&mut self, role: PdRole, store: Arc<dyn KvStore>) {
+        self.pd = Some(EnginePd { role, store });
+    }
+
+    /// The configured PD role ([`PdRole::Unified`] when PD is off).
+    pub fn pd_role(&self) -> PdRole {
+        self.pd.as_ref().map(|p| p.role).unwrap_or(PdRole::Unified)
+    }
+
+    /// The KV store handle, when PD is enabled.
+    pub fn pd_store(&self) -> Option<&Arc<dyn KvStore>> {
+        self.pd.as_ref().map(|p| &p.store)
+    }
+
+    /// The prefill half of PD disaggregation: materialize the prompt (with
+    /// local prefix-cache reuse), push it through the model session so
+    /// physical KV exists, publish the bundle into the KV store under its
+    /// content-hash key, and release the local pages. No token is decoded.
+    ///
+    /// Mooncake mapping: this is the prefill worker writing KV blocks into
+    /// the distributed cache pool. A repeated prompt hits the same key
+    /// (`store_hit`), so cross-request KV reuse survives worker restarts.
+    pub fn prefill_only(&mut self, req: &WriteRequest) -> Result<PrefillReceipt, PdError> {
+        let Some(pd) = self.pd.as_ref() else {
+            return Err(PdError::Store("pd not enabled: no kv store".into()));
+        };
+        let store = Arc::clone(&pd.store);
+
+        let mut seq = self.admit(req).map_err(|out| PdError::Rejected(Box::new(out)))?;
+        while seq.prefill_pos < seq.prompt.len() {
+            let chunk =
+                (seq.prompt.len() - seq.prefill_pos).min(self.max_prefill_tokens_per_step);
+            self.prefill_chunk(&mut seq, chunk);
+        }
+        // Run the model over the prompt so the physical KV exists to export.
+        if let Some(session) = seq.session.as_mut() {
+            let fed = session.context_len();
+            if fed < seq.tokens.len() {
+                session.forward(&seq.tokens[fed..]);
+            }
+        }
+        let bundle = pd::PrefillBundle {
+            prompt_tokens: seq.prompt.clone(),
+            kv: seq.session.as_ref().and_then(|s| s.export_kv()),
+        };
+        let key = pd::bundle_key(&bundle.prompt_tokens);
+        let body = bundle.to_json();
+        let kv_bytes = body.len();
+        let store_hit = store
+            .get(&key)
+            .map_err(|e| PdError::Store(e.to_string()))?
+            .is_some();
+        store
+            .put(&key, &body)
+            .map_err(|e| PdError::Store(e.to_string()))?;
+
+        // Publish the path into the local prefix cache and hand the session
+        // KV to the backend vault, then release this request's page
+        // references — the prefill worker keeps no per-request state.
+        self.publish_prefix(&seq.tokens, &seq.locs);
+        if let Some(session) = seq.session.take() {
+            self.model
+                .offer_session_kv(&seq.tokens, seq.prompt_len, session);
+        }
+        for &b in &seq.blocks {
+            self.kv.dec_ref(b);
+        }
+
+        self.pd_prefill_requests += 1;
+        self.pd_kv_bytes += kv_bytes as u64;
+        Ok(PrefillReceipt {
+            kv_key: key,
+            prompt_tokens: seq.prompt_len,
+            prefill_tokens: seq.prefill_cost,
+            kv_bytes,
+            store_hit,
+        })
+    }
+
+    /// The decode half of PD disaggregation: pull a prefilled bundle out of
+    /// the KV store, adopt its prompt pages locally (the transfer-engine
+    /// "pull into local HBM" step), and run the normal continuous-batching
+    /// decode loop — without paying any prefill compute here.
+    pub fn decode_from_kv(
+        &mut self,
+        key: &str,
+        sampling: SamplingParams,
+    ) -> Result<GenerationOutput, PdError> {
+        self.decode_from_kv_inner(key, sampling, None)
+    }
+
+    /// [`decode_from_kv`] with a per-token sink: `sink(seq_id, piece)` fires
+    /// as each token is sampled, in order — the SSE streaming path.
+    pub fn decode_from_kv_streaming(
+        &mut self,
+        key: &str,
+        sampling: SamplingParams,
+        sink: &mut dyn FnMut(usize, &str),
+    ) -> Result<GenerationOutput, PdError> {
+        self.decode_from_kv_inner(key, sampling, Some(sink))
+    }
+
+    fn decode_from_kv_inner(
+        &mut self,
+        key: &str,
+        sampling: SamplingParams,
+        sink: Option<&mut dyn FnMut(usize, &str)>,
+    ) -> Result<GenerationOutput, PdError> {
+        let Some(pd) = self.pd.as_ref() else {
+            return Err(PdError::Store("pd not enabled: no kv store".into()));
+        };
+        let store = Arc::clone(&pd.store);
+        let raw = store
+            .get(key)
+            .map_err(|e| PdError::Store(e.to_string()))?
+            .ok_or_else(|| PdError::KvMiss(key.to_string()))?;
+        let bundle =
+            pd::PrefillBundle::parse(&raw).ok_or_else(|| PdError::BadBundle(key.to_string()))?;
+        self.pd_decode_requests += 1;
+        self.pd_kv_bytes += raw.len() as u64;
+
+        let prompt = bundle.prompt_tokens;
+        let prompt_len = prompt.len();
+        let max_new = sampling.max_tokens;
+
+        let reason = if sampling.grammar.is_some() && !self.tokenizer.is_byte_level() {
+            Some(RejectReason::Unsupported)
+        } else if prompt_len == 0 {
+            Some(RejectReason::EmptyPrompt)
+        } else if prompt_len.saturating_add(max_new) > self.config.max_total_tokens {
+            Some(RejectReason::TooLong)
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return Ok(self.reject(reason, prompt_len));
+        }
+
+        let id = self.next_request_id;
+        self.next_request_id += 1;
+        let session = bundle
+            .kv
+            .as_deref()
+            .and_then(|kv| self.model.import_session(&prompt, kv));
+        let mut seq = Seq {
+            id,
+            sampling,
+            prompt: prompt.clone(),
+            tokens: Vec::with_capacity(prompt_len + max_new),
+            output: Vec::with_capacity(max_new),
+            prompt_len,
+            // The whole prompt arrives as a remote KV hit: counted like a
+            // prefix hit so the revenue metrics read the transfer as saved
+            // compute, while `total_prefill_tokens` stays 0 (the prefill
+            // happened on the other worker).
+            prefix_hit: prompt_len,
+            prefill_cost: 0,
+            prefill_pos: 0,
+            blocks: Vec::new(),
+            locs: Vec::with_capacity(prompt_len + max_new),
+            session,
+        };
+        // Adopt the bundle into local paged memory.
+        for &tok in &prompt {
+            self.append_physical(&mut seq, tok);
+            seq.tokens.push(tok);
+        }
+        seq.prefill_pos = prompt_len;
+
+        self.total_requests += 1;
+        self.total_prompt_tokens += prompt_len as u64;
+
+        self.sampler.seed(seq.sampling.seed);
+        let mut waiting = VecDeque::with_capacity(1);
+        waiting.push_back(seq);
+        let out = self
+            .drain(waiting, Vec::new(), sink)
+            .pop()
+            .expect("drain yields one output per admitted sequence");
+        Ok(out)
+    }
+
     /// Branch generation off a pinned checkpoint: the checkpoint tokens act as
     /// the prompt prefix with a guaranteed full hit (no prefix-cache walk,
     /// immune to eviction), and `continuation` is appended on top. Returns
@@ -565,6 +820,26 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
         continuation: &str,
         sampling: SamplingParams,
     ) -> Option<GenerationOutput> {
+        let seq = match self.admit_from_checkpoint(id, continuation, sampling)? {
+            Ok(seq) => seq,
+            Err(out) => return Some(out),
+        };
+        let mut waiting = VecDeque::new();
+        waiting.push_back(seq);
+        let mut outputs = self.drain(waiting, Vec::new(), None);
+        Some(outputs.pop().expect("one sequence yields one output"))
+    }
+
+    /// Checkpoint-branch admission: build the branch [Seq] holding COW
+    /// references on the pinned trunk blocks, charging the checkpoint-hit
+    /// metrics. `None` = unknown checkpoint; `Some(Err)` = admission
+    /// rejection; `Some(Ok)` = schedulable sequence.
+    fn admit_from_checkpoint(
+        &mut self,
+        id: CheckpointId,
+        continuation: &str,
+        sampling: SamplingParams,
+    ) -> Option<Result<Seq, GenerationOutput>> {
         let (tokens, locs, blocks, session) = {
             let cp = self.checkpoints.get(&id.0)?;
             (
@@ -590,7 +865,7 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
             None
         };
         if let Some(reason) = reason {
-            return Some(self.reject(reason, prompt_len));
+            return Some(Err(self.reject(reason, prompt_len)));
         }
 
         // Take branch-side references on the pinned blocks.
@@ -607,7 +882,7 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
 
         let rid = self.next_request_id;
         self.next_request_id += 1;
-        let seq = Seq {
+        Some(Ok(Seq {
             id: rid,
             sampling,
             prompt,
@@ -620,17 +895,43 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
             blocks,
             locs,
             session: session.or_else(|| self.model.begin_session()),
-        };
-        let mut waiting = VecDeque::new();
-        waiting.push_back(seq);
-        let mut outputs = self.drain(waiting, Vec::new());
-        Some(outputs.pop().expect("one sequence yields one output"))
+        }))
+    }
+
+
+    /// Cancel an in-flight request: pull it out of whichever scheduler queue
+    /// it sits in, release its KV block references, and count the abort. The
+    /// partial session is dropped without publishing (conservative, same as
+    /// the fault path). Returns false when the id has already finished.
+    fn abort_seq(&mut self, state: &mut DrainState, id: usize) -> bool {
+        fn take_from(queue: &mut VecDeque<Seq>, id: usize) -> Option<Seq> {
+            let pos = queue.iter().position(|s| s.id == id)?;
+            queue.remove(pos)
+        }
+        let found = take_from(&mut state.waiting, id)
+            .or_else(|| take_from(&mut state.ready, id))
+            .or_else(|| {
+                state
+                    .active
+                    .iter()
+                    .position(|s| s.id == id)
+                    .map(|pos| state.active.remove(pos))
+            });
+        let Some(seq) = found else { return false };
+        for &b in &seq.blocks {
+            self.kv.dec_ref(b);
+        }
+        self.total_aborted += 1;
+        true
     }
 
     /// Build a rejected-output marker and charge the rejection metric.
     fn reject(&mut self, reason: RejectReason, prompt_tokens: usize) -> GenerationOutput {
         self.total_rejected += 1;
+        let id = self.next_request_id;
+        self.next_request_id += 1;
         GenerationOutput {
+            request_id: id,
             text: String::new(),
             full_text: None,
             output_token_ids: Vec::new(),
@@ -950,7 +1251,12 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
     /// validate the logits, apply sampling penalties and grammar masks,
     /// sample one token, materialize it into paged KV, and check the finish
     /// conditions.
-    fn advance_with_logits(&mut self, mut seq: Seq, mut logits: Vec<f32>) -> Advance {
+    fn advance_with_logits(
+        &mut self,
+        mut seq: Seq,
+        mut logits: Vec<f32>,
+        sink: &mut Option<&mut dyn FnMut(usize, &str)>,
+    ) -> Advance {
         if !self.logits_sane(&logits) {
             self.total_faults += 1;
             return Advance::Done(self.finalize(seq, FinishReason::Fault));
@@ -977,6 +1283,10 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
         self.append_physical(&mut seq, tok);
         seq.tokens.push(tok);
         seq.output.push(tok);
+        if let Some(s) = sink.as_mut() {
+            let piece = self.tokenizer.decode(&[tok]);
+            s(seq.id, &piece);
+        }
 
         if let Some(reason) = self.finish_reason(&seq) {
             return Advance::Done(self.finalize(seq, reason));
@@ -1029,6 +1339,7 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
         let out_len = seq.output.len();
         self.total_output_tokens += out_len as u64;
         GenerationOutput {
+            request_id: seq.id,
             text,
             full_text: Some(full),
             output_token_ids: seq.output,
@@ -1037,6 +1348,161 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
             prefix_hit_tokens: seq.prefix_hit,
             forward_count: seq.prefill_cost + out_len,
             rejection: None,
+        }
+    }
+    /// Spawn the scheduler actor: the engine moves onto a background thread
+    /// and serves a stream of live submissions with one long-lived
+    /// continuous-batching loop, so concurrent HTTP requests overlap (B's
+    /// chunked prefill interleaves with A's decode steps) instead of
+    /// serializing behind a process-wide mutex.
+    pub fn into_actor(mut self) -> crate::actor::EngineHandle
+    where
+        M: Send + 'static,
+        T: Send + 'static,
+    {
+        let (tx, rx) = mpsc::channel::<crate::actor::ActorMsg>();
+        std::thread::spawn(move || self.actor_loop(rx));
+        crate::actor::EngineHandle::new(tx)
+    }
+
+    /// The actor's scheduler loop: pull submissions when idle (blocking) or
+    /// between steps (burst-draining the channel), run one [Engine::drain_step], deliver
+    /// completions to the routed reply channels. Terminates when every handle
+    /// is dropped (channel closes) or on an explicit Shutdown.
+    fn actor_loop(&mut self, rx: mpsc::Receiver<crate::actor::ActorMsg>) {
+        use crate::actor::{ActorMsg, StreamEvent};
+        let mut state = DrainState {
+            waiting: VecDeque::new(),
+            ready: VecDeque::new(),
+            active: Vec::new(),
+        };
+        let mut routes: HashMap<usize, mpsc::Sender<StreamEvent>> = HashMap::new();
+        let mut channel_gone = false;
+        loop {
+            // Gather a burst: block for the first message when idle, then
+            // drain everything already queued so a submission burst joins
+            // the next step together instead of trickling in one admission
+            // per step.
+            let mut burst: Vec<ActorMsg> = Vec::new();
+            if !channel_gone {
+                let first = if state.is_idle() {
+                    match rx.recv() {
+                        Ok(m) => Some(m),
+                        Err(_) => break,
+                    }
+                } else {
+                    rx.try_recv().ok()
+                };
+                if let Some(m) = first {
+                    burst.push(m);
+                }
+                loop {
+                    match rx.try_recv() {
+                        Ok(m) => burst.push(m),
+                        Err(mpsc::TryRecvError::Empty) => break,
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            channel_gone = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            let mut stop = false;
+            for msg in burst {
+                match msg {
+                    ActorMsg::Generate { req, events } => {
+                        if state.waiting.len() >= self.config.max_waiting_requests {
+                            let out = self.reject(RejectReason::QueueFull, 0);
+                            let _ = events.send(StreamEvent::Done(out));
+                        } else {
+                            match self.admit(&req) {
+                                Ok(seq) => {
+                                    routes.insert(seq.id, events);
+                                    state.waiting.push_back(seq);
+                                }
+                                Err(out) => {
+                                    let _ = events.send(StreamEvent::Done(out));
+                                }
+                            }
+                        }
+                    }
+                    ActorMsg::Stats { reply } => {
+                        let _ = reply.send(self.stats());
+                    }
+                    ActorMsg::CheckpointCreate { text, reply } => {
+                        let _ = reply.send(self.create_checkpoint(&text).0);
+                    }
+                    ActorMsg::CheckpointDrop { id, reply } => {
+                        let _ = reply.send(self.drop_checkpoint(CheckpointId(id)));
+                    }
+                    ActorMsg::CheckpointGenerate {
+                        id,
+                        continuation,
+                        sampling,
+                        events,
+                        admitted,
+                    } => {
+                        let admission = if state.waiting.len()
+                            >= self.config.max_waiting_requests
+                        {
+                            Some(Err(self.reject(RejectReason::QueueFull, 0)))
+                        } else {
+                            self.admit_from_checkpoint(
+                                CheckpointId(id),
+                                &continuation,
+                                sampling,
+                            )
+                        };
+                        match admission {
+                            None => {
+                                let _ = admitted.send(false);
+                            }
+                            Some(Err(out)) => {
+                                let _ = admitted.send(true);
+                                let _ = events.send(StreamEvent::Done(out));
+                            }
+                            Some(Ok(seq)) => {
+                                let _ = admitted.send(true);
+                                routes.insert(seq.id, events);
+                                state.waiting.push_back(seq);
+                            }
+                        }
+                    }
+                    ActorMsg::Shutdown => {
+                        stop = true;
+                        break;
+                    }
+                }
+            }
+            if stop {
+                break;
+            }
+            if state.is_idle() {
+                if channel_gone {
+                    break;
+                }
+                continue;
+            }
+            let mut aborted: Vec<usize> = Vec::new();
+            let mut sink_fn = |seq_id: usize, piece: &str| {
+                if let Some(tx) = routes.get(&seq_id) {
+                    if tx.send(StreamEvent::Token(piece.to_string())).is_err()
+                        && !aborted.contains(&seq_id)
+                    {
+                        aborted.push(seq_id);
+                    }
+                }
+            };
+            let outputs = self.drain_step(&mut state, &mut Some(&mut sink_fn));
+            for id in aborted {
+                routes.remove(&id);
+                self.abort_seq(&mut state, id);
+            }
+            for out in outputs {
+                if let Some(tx) = routes.remove(&out.request_id) {
+                    let _ = tx.send(StreamEvent::Done(out));
+                }
+            }
         }
     }
 }
@@ -1131,6 +1597,8 @@ pub struct EngineStats {
     /// Tokens served from the APC cache (APC backend only).
     pub apc_hit_tokens: u64,
     pub kv_blocks: usize,
+    /// Tokens per KV block (page size), for pages-unit derivations.
+    pub kv_block_size: usize,
     pub kv_free_blocks: usize,
     pub kv_allocations: usize,
     pub kv_frees: usize,
@@ -1146,10 +1614,21 @@ pub struct EngineStats {
     pub faulted_requests: u64,
     /// Requests refused during admission (queue full / too long / empty prompt).
     pub rejected_requests: u64,
+    /// Requests cancelled mid-flight because their result channel went away
+    /// (e.g. the SSE client disconnected).
+    pub aborted_requests: u64,
     /// Currently pinned KV checkpoints.
     pub active_checkpoints: usize,
     /// Prompt tokens served from pinned checkpoints (guaranteed-hit branches).
     pub checkpoint_hit_tokens: u64,
+    /// PD serving role of this engine.
+    pub pd_role: pd::PdRole,
+    /// Prefill bundles this worker published (PD prefill role).
+    pub pd_prefill_requests: u64,
+    /// Requests decoded from pulled KV bundles (PD decode role).
+    pub pd_decode_requests: u64,
+    /// Serialized KV bundle volume transferred through the store, in bytes.
+    pub pd_kv_bytes: u64,
 }
 
 impl EngineStats {

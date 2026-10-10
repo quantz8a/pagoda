@@ -214,6 +214,23 @@ pub trait CandleCausalLM: Send + Sync {
     fn cache_prefix(_cache: &Self::Cache, _len: usize) -> Option<Self::Cache> {
         None
     }
+
+    /// Serialize a session cache plus its last-position logits for PD
+    /// transfer (prefill worker side, Mooncake-style disaggregation).
+    /// Default `None`: KV is not portable.
+    fn cache_export(_cache: &Self::Cache, _last_logits: Option<&[f32]>) -> Option<Vec<u8>> {
+        None
+    }
+    /// Rebuild a session cache from [`CandleCausalLM::cache_export`] bytes on
+    /// `device` in `dtype` (decode worker side). The returned logits let the
+    /// imported session answer the first empty-feed read bit-identically.
+    fn cache_import(
+        _bytes: &[u8],
+        _device: &Device,
+        _dtype: DType,
+    ) -> Option<(Self::Cache, Option<Vec<f32>>)> {
+        None
+    }
 }
 
 /// Llama family over the vendored [`OwnedLlama`]: per-session [`SessionKv`]
@@ -235,6 +252,24 @@ impl CandleCausalLM for LlamaCausalLM {
 
     fn cache_prefix(cache: &Self::Cache, len: usize) -> Option<Self::Cache> {
         cache.prefix(len)
+    }
+
+    fn cache_export(cache: &Self::Cache, last_logits: Option<&[f32]>) -> Option<Vec<u8>> {
+        cache.export_bytes(last_logits)
+    }
+
+    fn cache_import(
+        bytes: &[u8],
+        device: &Device,
+        dtype: DType,
+    ) -> Option<(Self::Cache, Option<Vec<f32>>)> {
+        match SessionKv::import_bytes(bytes, device, dtype) {
+            Ok(pair) => Some(pair),
+            Err(e) => {
+                eprintln!("[pagoda-hf] kv import failed: {e:#}");
+                None
+            }
+        }
     }
 
     fn forward_tokens(&self, tokens: &[u32], cache: &mut Self::Cache) -> Result<Vec<f32>> {
@@ -311,6 +346,8 @@ impl CandleCausalLM for LlamaCausalLM {
 pub struct CandleModel<M: CandleCausalLM = LlamaCausalLM> {
     model: Arc<M>,
     device: Device,
+    /// Compute dtype: PD KV imports are cast into it on arrival.
+    dtype: DType,
     vocab_size: usize,
     /// Ground-truth model compute: tokens actually pushed through forward
     /// calls (stateless + all sessions). Engine-level stats model a shared-KV
@@ -394,6 +431,7 @@ impl CandleModel<LlamaCausalLM> {
         Ok(Self {
             model: Arc::new(LlamaCausalLM { model }),
             device,
+            dtype,
             vocab_size,
             tokens_fed: Arc::new(AtomicU64::new(0)),
             vault: Arc::new(Mutex::new(KvVault::with_budget(
@@ -538,6 +576,30 @@ impl<M: CandleCausalLM + 'static> ModelEngine for CandleModel<M> {
             vault.offer(&tokens[..fed], cs.cache.clone());
         }
     }
+
+    /// PD decode half: rebuild a session from a prefill worker's exported KV
+    /// payload. The session reports `context_len() == tokens.len()` and
+    /// replays the prefill worker's last-position logits on an empty feed, so
+    /// the engine's first decode sample needs zero recompute.
+    fn import_session(&self, tokens: &[u32], kv: &[u8]) -> Option<Box<dyn ModelSession>> {
+        let (cache, last_logits) = M::cache_import(kv, &self.device, self.dtype)?;
+        let fed = M::cache_len(&cache);
+        if fed != tokens.len() {
+            eprintln!(
+                "[pagoda-hf] kv import length mismatch: cache covers {fed}, prompt has {}",
+                tokens.len()
+            );
+            return None;
+        }
+        Some(Box::new(CandleSession {
+            model: Arc::clone(&self.model),
+            cache,
+            fed,
+            vocab_size: self.vocab_size,
+            last_logits,
+            tokens_fed: Arc::clone(&self.tokens_fed),
+        }))
+    }
 }
 
 /// One sequence's incremental decode state: its own KV cache plus the number
@@ -599,6 +661,12 @@ impl<M: CandleCausalLM + 'static> ModelSession for CandleSession<M> {
         Some(self)
     }
 
+    /// PD prefill half: serialize this session's KV cache and last-position
+    /// logits into a portable payload (F32 on the wire).
+    fn export_kv(&self) -> Option<Vec<u8>> {
+        M::cache_export(&self.cache, self.last_logits.as_deref())
+    }
+
     fn fork(&self) -> Option<Box<dyn ModelSession>> {
         // Candle tensors are Arc-shared and immutable; appends concatenate
         // into fresh tensors, so the cloned cache is an independent branch
@@ -611,5 +679,99 @@ impl<M: CandleCausalLM + 'static> ModelSession for CandleSession<M> {
             last_logits: self.last_logits.clone(),
             tokens_fed: Arc::clone(&self.tokens_fed),
         }))
+    }
+}
+
+#[cfg(test)]
+mod pd_tests {
+    //! PD disaggregation with real tensor KV: a zero-weight Llama exercises
+    //! the export/import path end to end (degenerate but deterministic logits)
+    //! without downloading weights.
+    use super::*;
+    use crate::llama::OwnedLlama;
+    use candle_transformers::models::llama::Config;
+    use pagoda::{ByteTokenizer, Engine, EngineConfig, LocalStore, PdRole, SamplingParams, WriteRequest};
+
+    fn zeros_model() -> CandleModel {
+        let config = Config {
+            vocab_size: 320,
+            hidden_size: 32,
+            intermediate_size: 64,
+            num_hidden_layers: 2,
+            num_attention_heads: 4,
+            num_key_value_heads: 2,
+            rms_norm_eps: 1e-5,
+            rope_theta: 10000.0,
+            bos_token_id: None,
+            eos_token_id: None,
+            rope_scaling: None,
+            max_position_embeddings: 256,
+            tie_word_embeddings: false,
+            use_flash_attn: false,
+        };
+        let device = Device::Cpu;
+        let vb = VarBuilder::zeros(DType::F32, &device);
+        let model = OwnedLlama::load(vb, &config, DType::F32, &device).expect("zeros llama");
+        CandleModel {
+            model: Arc::new(LlamaCausalLM { model }),
+            device,
+            dtype: DType::F32,
+            vocab_size: config.vocab_size,
+            tokens_fed: Arc::new(AtomicU64::new(0)),
+            vault: Arc::new(Mutex::new(KvVault::with_budget(16, 1 << 20))),
+        }
+    }
+
+    #[test]
+    fn candle_pd_split_matches_unified() {
+        let cfg = || EngineConfig {
+            num_kv_blocks: 256,
+            block_size: 8,
+            ..EngineConfig::default()
+        };
+        let req = WriteRequest::new(
+            "hello candle pd",
+            SamplingParams {
+                max_tokens: 8,
+                ..SamplingParams::default()
+            },
+        );
+
+        let mut unified = Engine::new(ByteTokenizer::new(), zeros_model(), cfg());
+        let baseline = unified.generate(&req);
+        let unified_fed = unified
+            .model()
+            .tokens_fed_handle()
+            .load(Ordering::Relaxed);
+
+        let store = Arc::new(LocalStore::default());
+        let mut pre = Engine::new(ByteTokenizer::new(), zeros_model(), cfg());
+        pre.enable_pd(PdRole::Prefill, store.clone());
+        let mut dec = Engine::new(ByteTokenizer::new(), zeros_model(), cfg());
+        dec.enable_pd(PdRole::Decode, store);
+
+        let receipt = pre.prefill_only(&req).expect("prefill");
+        assert!(receipt.kv_bytes > 0, "tensor KV must be on the wire");
+        let out = dec
+            .decode_from_kv(&receipt.kv_key, req.sampling.clone())
+            .expect("decode");
+
+        assert_eq!(out.output_token_ids, baseline.output_token_ids);
+        assert_eq!(out.text, baseline.text);
+        assert_eq!(out.finish_reason, baseline.finish_reason);
+
+        // Compute accounting: the prefill worker pushed the whole prompt
+        // through the model; the decode worker pushed only generated tokens.
+        let pre_fed = pre.model().tokens_fed_handle().load(Ordering::Relaxed);
+        let dec_fed = dec.model().tokens_fed_handle().load(Ordering::Relaxed);
+        assert!(pre_fed as usize >= baseline.prompt_tokens);
+        assert!(
+            (dec_fed as usize) <= baseline.output_token_ids.len(),
+            "decode worker must not recompute the prompt: fed {dec_fed}"
+        );
+        assert!(
+            unified_fed as usize >= baseline.prompt_tokens,
+            "unified pays prompt prefill"
+        );
     }
 }

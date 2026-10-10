@@ -123,6 +123,9 @@ impl WriteRequest {
 /// Result of one generation.
 #[derive(Clone, Debug)]
 pub struct GenerationOutput {
+    /// Scheduler-assigned request id (monotonic per engine); lets concurrent
+    /// servers route completions to the right waiting client.
+    pub request_id: usize,
     /// Decoded text of only the newly generated tokens.
     pub text: String,
     /// Decoded prefix + generation, when available.

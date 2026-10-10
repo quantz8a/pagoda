@@ -15,11 +15,13 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::actor::{EngineHandle, StreamEvent};
 use crate::engine::{CheckpointId, Engine, EngineStats};
 use crate::grammar::Grammar;
 use crate::http_client;
 use crate::json::{self, Value};
 use crate::model::ModelEngine;
+use crate::pd::{PdError, PdRole, PrefillReceipt};
 use crate::spec::{FinishReason, GenerationOutput, SamplingParams, WriteRequest};
 use crate::tokenizer::Tokenizer;
 
@@ -40,6 +42,9 @@ pub struct Proxy {
     routed: AtomicU64,
     /// Department-specific upstreams from --route dept=url (Laya routes).
     routes: Vec<Route>,
+    /// Prefix-affine pool over multiple default upstreams (comma-separated
+    /// --upstream). None for a single default.
+    prefix_pool: Option<Mutex<crate::pd::PrefixRouter>>,
 }
 
 /// One --route entry: a Laya department name and its dedicated upstream.
@@ -51,15 +56,31 @@ struct Route {
 
 impl Proxy {
     /// Build from `http://host[:port]`; anything else returns `None`.
+    /// A comma-separated list (`http://a:1,http://b:2`) builds a
+    /// prefix-affine pool: prompts route to the worker that served their
+    /// longest matching prefix (cache affinity); the first URL is the
+    /// default for non-generation traffic.
     pub fn from_url(url: &str) -> Option<Self> {
-        let addr = http_client::parse_http_addr(url)?;
+        let urls: Vec<String> = url
+            .split(',')
+            .map(|u| u.trim().trim_end_matches('/').to_string())
+            .filter(|u| !u.is_empty())
+            .collect();
+        let first = urls.first()?.clone();
+        let addr = http_client::parse_http_addr(&first)?;
+        let prefix_pool = if urls.len() > 1 {
+            crate::pd::PrefixRouter::new(&urls).map(Mutex::new)
+        } else {
+            None
+        };
         Some(Self {
             addr,
-            url: url.trim_end_matches('/').to_string(),
+            url: first,
             proxied: AtomicU64::new(0),
             streamed: AtomicU64::new(0),
             routed: AtomicU64::new(0),
             routes: Vec::new(),
+            prefix_pool,
         })
     }
 
@@ -102,17 +123,42 @@ impl Proxy {
         self.routed.load(Ordering::Relaxed)
     }
 
-    /// Pick the upstream address for a Laya department; bool = matched a
-    /// department-specific route (vs. the default upstream).
-    fn pick(&self, dept: Option<&str>) -> (&str, bool) {
+    /// Pool member URLs when built from a comma-separated list (empty for a
+    /// single default upstream).
+    pub fn pool_urls(&self) -> Vec<String> {
+        self.prefix_pool
+            .as_ref()
+            .map(|p| p.lock().expect("prefix router poisoned").urls().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Per-pool-member routed request counts (aligned with pool_urls).
+    pub fn pool_routed(&self) -> Vec<u64> {
+        self.prefix_pool
+            .as_ref()
+            .map(|p| p.lock().expect("prefix router poisoned").routed_counts().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// Pick the upstream address: a department-specific route wins; then the
+    /// prefix-affine pool (recording the assignment so same-prefix prompts
+    /// stick); otherwise the default upstream. bool = matched a department
+    /// route.
+    fn pick(&self, dept: Option<&str>, prompt: Option<&str>) -> (String, bool) {
         if let Some(d) = dept {
             for route in &self.routes {
                 if route.dept == d {
-                    return (&route.addr, true);
+                    return (route.addr.clone(), true);
                 }
             }
         }
-        (&self.addr, false)
+        if let (Some(pool), Some(text)) = (&self.prefix_pool, prompt) {
+            let mut router = pool.lock().expect("prefix router poisoned");
+            let idx = router.pick(text);
+            router.record(text, idx);
+            return (router.addr(idx).to_string(), false);
+        }
+        (self.addr.clone(), false)
     }
 
     /// Forward one request and relay the response as a live stream: upstream
@@ -127,12 +173,13 @@ impl Proxy {
         body: &str,
         dept: Option<&str>,
     ) -> std::io::Result<()> {
-        let (addr, matched) = self.pick(dept);
+        let prompt = extract_user_text(path, body);
+        let (addr, matched) = self.pick(dept, prompt.as_deref());
         if matched {
             self.routed.fetch_add(1, Ordering::Relaxed);
         }
         let up = http_client::request_open(
-            addr,
+            &addr,
             method,
             path,
             Some(body),
@@ -147,7 +194,7 @@ impl Proxy {
                         502,
                         &format!(
                             r#"{{"error":"upstream_unreachable","upstream":"{}","detail":"{e}"}}"#,
-                            self.url
+                            addr
                         ),
                     ),
                 );
@@ -185,11 +232,12 @@ impl Proxy {
     /// Forward one JSON request verbatim; passthrough (status, body).
     /// Upstream failures degrade to a 502 instead of poisoning the server.
     fn forward(&self, method: &str, path: &str, body: Option<&str>, dept: Option<&str>) -> HttpResponse {
-        let (addr, matched) = self.pick(dept);
+        let prompt = body.and_then(|b| extract_user_text(path, b));
+        let (addr, matched) = self.pick(dept, prompt.as_deref());
         if matched {
             self.routed.fetch_add(1, Ordering::Relaxed);
         }
-        match http_client::request(addr, method, path, body, http_client::DEFAULT_TIMEOUT) {
+        match http_client::request(&addr, method, path, body, http_client::DEFAULT_TIMEOUT) {
             Ok((status, body)) => {
                 self.proxied.fetch_add(1, Ordering::Relaxed);
                 HttpResponse { status, body }
@@ -198,7 +246,7 @@ impl Proxy {
                 502,
                 &format!(
                     r#"{{"error":"upstream_unreachable","upstream":"{}","detail":"{e}"}}"#,
-                    self.url
+                    addr
                 ),
             ),
         }
@@ -246,6 +294,38 @@ pub trait ServingEngine {
     ) -> Option<GenerationOutput> {
         None
     }
+
+    /// PD serving role ([`PdRole::Unified`] when PD is off).
+    fn pd_role(&self) -> PdRole {
+        PdRole::Unified
+    }
+    /// Run the prefill half and publish the KV bundle to the store.
+    /// Default: `None` (PD not enabled).
+    fn pd_prefill(
+        &mut self,
+        _req: &WriteRequest,
+    ) -> Option<Result<PrefillReceipt, PdError>> {
+        None
+    }
+    /// Decode from a KV bundle pulled out of the store.
+    /// Default: `None` (PD not enabled).
+    fn pd_decode(
+        &mut self,
+        _kv_key: &str,
+        _sampling: SamplingParams,
+    ) -> Option<Result<GenerationOutput, PdError>> {
+        None
+    }
+    /// [`pd_decode`] with a per-token sink for SSE streaming.
+    /// Default: `None` (PD not enabled).
+    fn pd_decode_stream(
+        &mut self,
+        _kv_key: &str,
+        _sampling: SamplingParams,
+        _sink: &mut dyn FnMut(usize, &str),
+    ) -> Option<Result<GenerationOutput, PdError>> {
+        None
+    }
 }
 
 impl<M: ModelEngine, T: Tokenizer> ServingEngine for Engine<M, T> {
@@ -272,6 +352,61 @@ impl<M: ModelEngine, T: Tokenizer> ServingEngine for Engine<M, T> {
         sampling: SamplingParams,
     ) -> Option<GenerationOutput> {
         Engine::generate_from_checkpoint(self, CheckpointId(id), continuation, sampling)
+    }
+
+    fn pd_role(&self) -> PdRole {
+        Engine::pd_role(self)
+    }
+
+    fn pd_prefill(
+        &mut self,
+        req: &WriteRequest,
+    ) -> Option<Result<PrefillReceipt, PdError>> {
+        self.pd_store()
+            .is_some()
+            .then(|| Engine::prefill_only(self, req))
+    }
+
+    fn pd_decode(
+        &mut self,
+        kv_key: &str,
+        sampling: SamplingParams,
+    ) -> Option<Result<GenerationOutput, PdError>> {
+        self.pd_store()
+            .is_some()
+            .then(|| Engine::decode_from_kv(self, kv_key, sampling))
+    }
+
+    fn pd_decode_stream(
+        &mut self,
+        kv_key: &str,
+        sampling: SamplingParams,
+        sink: &mut dyn FnMut(usize, &str),
+    ) -> Option<Result<GenerationOutput, PdError>> {
+        self.pd_store()
+            .is_some()
+            .then(|| Engine::decode_from_kv_streaming(self, kv_key, sampling, sink))
+    }
+}
+
+/// PD conductor target: the prefill worker a decode-role server forwards
+/// plain-text `/generate` requests to, before decoding from the returned KV
+/// key locally (Mooncake's scheduler/conductor role).
+pub struct Conductor {
+    prefill_url: String,
+    addr: String,
+}
+
+impl Conductor {
+    pub fn from_url(url: &str) -> Option<Self> {
+        http_client::parse_http_addr(url).map(|addr| Self {
+            prefill_url: url.trim_end_matches('/').to_string(),
+            addr,
+        })
+    }
+
+    pub fn prefill_url(&self) -> &str {
+        &self.prefill_url
     }
 }
 
@@ -366,6 +501,147 @@ pub fn handle_with_triage<E: ServingEngine>(
     path: &str,
     body: Option<&str>,
 ) -> HttpResponse {
+    handle_with_pd(engine, proxy, triage, None, method, path, body)
+}
+
+/// The engine-counter fields of `GET /stats` (proxy/triage extras are
+/// appended by the caller). Shared by the lock-based server and the
+/// concurrent actor server so both expose the same metrics schema.
+fn base_stats_fields(s: &crate::engine::EngineStats) -> Vec<(String, Value)> {
+    vec![
+        ("total_requests".to_string(), Value::Number(s.total_requests as f64)),
+        ("total_prompt_tokens".to_string(), Value::Number(s.total_prompt_tokens as f64)),
+        ("total_prefill_tokens".to_string(), Value::Number(s.total_prefill_tokens as f64)),
+        ("total_output_tokens".to_string(), Value::Number(s.total_output_tokens as f64)),
+        ("total_forward".to_string(), Value::Number(s.total_forward as f64)),
+        (
+            "total_decode_steps".to_string(),
+            Value::Number(s.total_decode_steps as f64),
+        ),
+        (
+            "total_decode_calls".to_string(),
+            Value::Number(s.total_decode_calls as f64),
+        ),
+        (
+            "decode_batch_factor".to_string(),
+            Value::Number(s.decode_batch_factor()),
+        ),
+        (
+            "model_graft_tokens".to_string(),
+            Value::Number(s.model_graft_tokens as f64),
+        ),
+        ("radix_nodes".to_string(), Value::Number(s.radix_nodes as f64)),
+        (
+            "radix_hit_tokens".to_string(),
+            Value::Number(s.radix_hit_tokens as f64),
+        ),
+        ("apc_blocks".to_string(), Value::Number(s.apc_blocks as f64)),
+        (
+            "apc_hit_tokens".to_string(),
+            Value::Number(s.apc_hit_tokens as f64),
+        ),
+        (
+            "active_checkpoints".to_string(),
+            Value::Number(s.active_checkpoints as f64),
+        ),
+        (
+            "checkpoint_hit_tokens".to_string(),
+            Value::Number(s.checkpoint_hit_tokens as f64),
+        ),
+        (
+            "compute_saved_tokens".to_string(),
+            Value::Number(s.compute_saved_tokens() as f64),
+        ),
+        (
+            "prefill_skip_ratio".to_string(),
+            Value::Number(s.prefill_skip_ratio()),
+        ),
+        (
+            "avg_forward_per_output_token".to_string(),
+            Value::Number(s.avg_forward_per_output_token()),
+        ),
+        (
+            "kv_blocks".to_string(),
+            Value::Number(s.kv_blocks as f64),
+        ),
+        ("kv_free_blocks".to_string(), Value::Number(s.kv_free_blocks as f64)),
+        ("kv_allocations".to_string(), Value::Number(s.kv_allocations as f64)),
+        ("kv_frees".to_string(), Value::Number(s.kv_frees as f64)),
+        ("kv_utilization".to_string(), Value::Number(s.kv_utilization())),
+        ("faulted_requests".to_string(), Value::Number(s.faulted_requests as f64)),
+        ("rejected_requests".to_string(), Value::Number(s.rejected_requests as f64)),
+        ("aborted_requests".to_string(), Value::Number(s.aborted_requests as f64)),
+        (
+            "pd_role".to_string(),
+            Value::String(s.pd_role.as_str().to_string()),
+        ),
+        (
+            "pd_prefill_requests".to_string(),
+            Value::Number(s.pd_prefill_requests as f64),
+        ),
+        (
+            "pd_decode_requests".to_string(),
+            Value::Number(s.pd_decode_requests as f64),
+        ),
+        (
+            "pd_kv_bytes".to_string(),
+            Value::Number(s.pd_kv_bytes as f64),
+        ),
+        ("savings".to_string(), {
+            // Four-axis savings ledger in three units. tokens: prompt tokens
+            // never re-materialized, per mechanism. pages: the same in KV
+            // blocks (floor of tokens / block size). forwards: one saved
+            // prefill forward per saved token, plus decode calls the batcher
+            // folded away (logical steps minus physical calls).
+            let bs = (s.kv_block_size.max(1)) as u64;
+            let radix = s.radix_hit_tokens;
+            let apc = s.apc_hit_tokens;
+            let ckpt = s.checkpoint_hit_tokens;
+            let graft = s.model_graft_tokens;
+            let tokens_total = radix + apc + ckpt + graft;
+            let batch_saved = s.total_decode_steps.saturating_sub(s.total_decode_calls);
+            let tokens_axis = Value::Object(vec![
+                ("radix".to_string(), Value::Number(radix as f64)),
+                ("apc".to_string(), Value::Number(apc as f64)),
+                ("checkpoint".to_string(), Value::Number(ckpt as f64)),
+                ("graft".to_string(), Value::Number(graft as f64)),
+                ("total".to_string(), Value::Number(tokens_total as f64)),
+            ]);
+            let pages_axis = Value::Object(vec![
+                ("radix".to_string(), Value::Number((radix / bs) as f64)),
+                ("apc".to_string(), Value::Number((apc / bs) as f64)),
+                ("checkpoint".to_string(), Value::Number((ckpt / bs) as f64)),
+                ("graft".to_string(), Value::Number((graft / bs) as f64)),
+                ("total".to_string(), Value::Number((tokens_total / bs) as f64)),
+            ]);
+            let forwards_axis = Value::Object(vec![
+                ("cache".to_string(), Value::Number(tokens_total as f64)),
+                ("batch".to_string(), Value::Number(batch_saved as f64)),
+                (
+                    "total".to_string(),
+                    Value::Number((tokens_total + batch_saved) as f64),
+                ),
+            ]);
+            Value::Object(vec![
+                ("tokens".to_string(), tokens_axis),
+                ("pages".to_string(), pages_axis),
+                ("forwards".to_string(), forwards_axis),
+            ])
+        }),
+    ]
+}
+/// [`handle_with_triage`] plus an optional PD [`Conductor`]: on a decode-role
+/// server a plain-text `/generate` is conducted — POSTed to the prefill
+/// worker, whose KV bundle key is then decoded locally.
+pub fn handle_with_pd<E: ServingEngine>(
+    engine: &mut E,
+    proxy: Option<&Proxy>,
+    triage: Option<&crate::triage::Triage>,
+    conductor: Option<&Conductor>,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> HttpResponse {
     if let Some(proxy) = proxy {
         // Heavy generation goes to the upstream worker. Everything else
         // (health, stats, checkpoints) is pagoda-local control plane.
@@ -381,69 +657,7 @@ pub fn handle_with_triage<E: ServingEngine>(
         ("GET", "/health") => HttpResponse::json(200, r#"{"status":"ok"}"#),
         ("GET", "/stats") => {
             let s = engine.stats();
-            let mut fields = vec![
-                ("total_requests".to_string(), Value::Number(s.total_requests as f64)),
-                ("total_prompt_tokens".to_string(), Value::Number(s.total_prompt_tokens as f64)),
-                ("total_prefill_tokens".to_string(), Value::Number(s.total_prefill_tokens as f64)),
-                ("total_output_tokens".to_string(), Value::Number(s.total_output_tokens as f64)),
-                ("total_forward".to_string(), Value::Number(s.total_forward as f64)),
-                (
-                    "total_decode_steps".to_string(),
-                    Value::Number(s.total_decode_steps as f64),
-                ),
-                (
-                    "total_decode_calls".to_string(),
-                    Value::Number(s.total_decode_calls as f64),
-                ),
-                (
-                    "decode_batch_factor".to_string(),
-                    Value::Number(s.decode_batch_factor()),
-                ),
-                (
-                    "model_graft_tokens".to_string(),
-                    Value::Number(s.model_graft_tokens as f64),
-                ),
-                ("radix_nodes".to_string(), Value::Number(s.radix_nodes as f64)),
-                (
-                    "radix_hit_tokens".to_string(),
-                    Value::Number(s.radix_hit_tokens as f64),
-                ),
-                ("apc_blocks".to_string(), Value::Number(s.apc_blocks as f64)),
-                (
-                    "apc_hit_tokens".to_string(),
-                    Value::Number(s.apc_hit_tokens as f64),
-                ),
-                (
-                    "active_checkpoints".to_string(),
-                    Value::Number(s.active_checkpoints as f64),
-                ),
-                (
-                    "checkpoint_hit_tokens".to_string(),
-                    Value::Number(s.checkpoint_hit_tokens as f64),
-                ),
-                (
-                    "compute_saved_tokens".to_string(),
-                    Value::Number(s.compute_saved_tokens() as f64),
-                ),
-                (
-                    "prefill_skip_ratio".to_string(),
-                    Value::Number(s.prefill_skip_ratio()),
-                ),
-                (
-                    "avg_forward_per_output_token".to_string(),
-                    Value::Number(s.avg_forward_per_output_token()),
-                ),
-                (
-                    "kv_blocks".to_string(),
-                    Value::Number(s.kv_blocks as f64),
-                ),
-                ("kv_free_blocks".to_string(), Value::Number(s.kv_free_blocks as f64)),
-                ("kv_allocations".to_string(), Value::Number(s.kv_allocations as f64)),
-                ("kv_frees".to_string(), Value::Number(s.kv_frees as f64)),
-                ("kv_utilization".to_string(), Value::Number(s.kv_utilization())),
-                ("faulted_requests".to_string(), Value::Number(s.faulted_requests as f64)),
-                ("rejected_requests".to_string(), Value::Number(s.rejected_requests as f64)),
-            ];
+            let mut fields = base_stats_fields(&s);
             if let Some(proxy) = proxy {
                 fields.push((
                     "upstream".to_string(),
@@ -461,6 +675,23 @@ pub fn handle_with_triage<E: ServingEngine>(
                     "routed_requests".to_string(),
                     Value::Number(proxy.routed_requests() as f64),
                 ));
+                let pool_urls = proxy.pool_urls();
+                if !pool_urls.is_empty() {
+                    fields.push((
+                        "upstream_pool".to_string(),
+                        Value::Array(pool_urls.into_iter().map(Value::String).collect()),
+                    ));
+                    fields.push((
+                        "upstream_pool_routed".to_string(),
+                        Value::Array(
+                            proxy
+                                .pool_routed()
+                                .into_iter()
+                                .map(|n| Value::Number(n as f64))
+                                .collect(),
+                        ),
+                    ));
+                }
                 let routes: Vec<Value> = proxy
                     .route_urls()
                     .into_iter()
@@ -497,9 +728,57 @@ pub fn handle_with_triage<E: ServingEngine>(
             HttpResponse::json(200, &body)
         }
         ("POST", "/generate") => {
+            let parsed = body.and_then(|b| json::parse(b).ok());
+            // PD decode path: {"kv_key": "kv-..."} pulls a prefilled bundle
+            // out of the store and decodes without re-prefill.
+            if let Some(key) = parsed
+                .as_ref()
+                .and_then(|v| v.get("kv_key"))
+                .and_then(Value::as_str)
+            {
+                let sampling = parsed
+                    .as_ref()
+                    .and_then(|v| v.get("sampling_params"))
+                    .map(parse_sampling)
+                    .unwrap_or_default();
+                return pd_decode_response(engine, key, sampling);
+            }
+            let req = match parsed.and_then(build_generate_request) {
+                Some(req) => req,
+                None => {
+                    return HttpResponse::json(
+                        400,
+                        r#"{"error":"invalid request; expected {\"text\": ...}}"#,
+                    )
+                }
+            };
+            // PD conductor path: hand the prompt to the prefill worker, then
+            // decode from the returned KV bundle.
+            if let Some(c) = conductor {
+                return conduct(engine, c, &req);
+            }
+            if engine.pd_role() == PdRole::Prefill {
+                return HttpResponse::json(
+                    400,
+                    r#"{"error":"prefill-only worker; use POST /prefill"}"#,
+                );
+            }
+            let out = engine.generate(&req);
+            if out.finish_reason == FinishReason::Rejected {
+                return rejection_response(&out);
+            }
+            HttpResponse::json(200, &generate_response(&out).to_json())
+        }
+        ("POST", "/prefill") => {
+            if engine.pd_role() == PdRole::Decode {
+                return HttpResponse::json(
+                    400,
+                    r#"{"error":"decode-only worker; use POST /generate"}"#,
+                );
+            }
             let req = match body
                 .and_then(|b| json::parse(b).ok())
-                .and_then(|v| build_generate_request(v))
+                .and_then(build_generate_request)
             {
                 Some(req) => req,
                 None => {
@@ -509,11 +788,38 @@ pub fn handle_with_triage<E: ServingEngine>(
                     )
                 }
             };
-            let out = engine.generate(&req);
-            if out.finish_reason == FinishReason::Rejected {
-                return rejection_response(&out);
+            match engine.pd_prefill(&req) {
+                Some(Ok(r)) => HttpResponse::json(
+                    200,
+                    &Value::Object(vec![
+                        ("kv_key".to_string(), Value::String(r.kv_key)),
+                        (
+                            "prompt_tokens".to_string(),
+                            Value::Number(r.prompt_tokens as f64),
+                        ),
+                        (
+                            "prefill_tokens".to_string(),
+                            Value::Number(r.prefill_tokens as f64),
+                        ),
+                        ("kv_bytes".to_string(), Value::Number(r.kv_bytes as f64)),
+                        ("store_hit".to_string(), Value::Bool(r.store_hit)),
+                    ])
+                    .to_json(),
+                ),
+                Some(Err(PdError::Rejected(out))) => rejection_response(&out),
+                Some(Err(e)) => HttpResponse::json(
+                    502,
+                    &Value::Object(vec![
+                        ("error".to_string(), Value::String("pd_prefill_failed".into())),
+                        ("detail".to_string(), Value::String(e.to_string())),
+                    ])
+                    .to_json(),
+                ),
+                None => HttpResponse::json(
+                    400,
+                    r#"{"error":"pd not enabled; start with --role prefill --store http://host:port"}"#,
+                ),
             }
-            HttpResponse::json(200, &generate_response(&out).to_json())
         }
         ("POST", "/v1/chat/completions") => {
             let req = match body
@@ -611,6 +917,228 @@ fn build_generate_request(v: Value) -> Option<WriteRequest> {
         .map(parse_sampling)
         .unwrap_or_default();
     Some(WriteRequest::new(text, sampling))
+}
+
+/// Decode from a store-pulled KV bundle, mapping PD failures to HTTP codes.
+fn pd_decode_response<E: ServingEngine>(
+    engine: &mut E,
+    kv_key: &str,
+    sampling: SamplingParams,
+) -> HttpResponse {
+    match engine.pd_decode(kv_key, sampling) {
+        Some(Ok(out)) => {
+            if out.finish_reason == FinishReason::Rejected {
+                return rejection_response(&out);
+            }
+            let mut resp = generate_response(&out);
+            if let Value::Object(ref mut entries) = resp {
+                entries.push(("kv_key".to_string(), Value::String(kv_key.to_string())));
+            }
+            HttpResponse::json(200, &resp.to_json())
+        }
+        Some(Err(e)) => pd_error_response(kv_key, e),
+        None => HttpResponse::json(
+            400,
+            r#"{"error":"pd not enabled; start with --role decode --store http://host:port"}"#,
+        ),
+    }
+}
+
+/// SSE decode from a KV bundle: one `data:` frame per sampled token, then a
+/// final frame carrying the finish reason and usage, then `[DONE]`. The head
+/// is written lazily on the first frame so pre-decode failures (kv miss,
+/// store down) still surface as plain JSON errors.
+fn pd_stream_decode<E: ServingEngine>(
+    engine: &mut E,
+    kv_key: &str,
+    sampling: SamplingParams,
+    stream: &mut TcpStream,
+) -> std::io::Result<()> {
+    const SSE_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+
+    let mut wrote_head = false;
+    let mut sink = |id: usize, piece: &str| {
+        if !wrote_head {
+            if stream.write_all(SSE_HEAD.as_bytes()).is_err() {
+                return;
+            }
+            wrote_head = true;
+        }
+        let frame = format!(
+            "data: {}\n\n",
+            Value::Object(vec![
+                ("id".to_string(), Value::Number(id as f64)),
+                ("token".to_string(), Value::String(piece.to_string())),
+            ])
+            .to_json()
+        );
+        let _ = write_chunk(stream, frame.as_bytes());
+    };
+    match engine.pd_decode_stream(kv_key, sampling, &mut sink) {
+        None => write_http_response(
+            stream,
+            &HttpResponse::json(
+                400,
+                r#"{"error":"pd not enabled; start with --role decode --store http://host:port"}"#,
+            ),
+        ),
+        Some(Err(e)) => write_http_response(stream, &pd_error_response(kv_key, e)),
+        Some(Ok(out)) => {
+            if !wrote_head {
+                stream.write_all(SSE_HEAD.as_bytes())?;
+            }
+            let final_frame = format!(
+                "data: {}\n\n",
+                Value::Object(vec![
+                    (
+                        "finish_reason".to_string(),
+                        Value::String(out.finish_reason.to_string()),
+                    ),
+                    (
+                        "prompt_tokens".to_string(),
+                        Value::Number(out.prompt_tokens as f64),
+                    ),
+                    (
+                        "output_tokens".to_string(),
+                        Value::Number(out.output_token_ids.len() as f64),
+                    ),
+                ])
+                .to_json()
+            );
+            write_chunk(stream, final_frame.as_bytes())?;
+            write_chunk(stream, b"data: [DONE]\n\n")?;
+            stream.write_all(b"0\r\n\r\n")
+        }
+    }
+}
+
+/// PD streaming entry point: returns `Some(..)` when the request was handled
+/// (or answered with an error), `None` to fall through to the buffered path.
+fn pd_stream<E: ServingEngine>(
+    engine: &mut E,
+    conductor: Option<&Conductor>,
+    body: &str,
+    stream: &mut TcpStream,
+) -> Option<std::io::Result<()>> {
+    let v = json::parse(body).ok()?;
+    let sampling = v.get("sampling_params").map(parse_sampling).unwrap_or_default();
+    let key = match v.get("kv_key").and_then(Value::as_str) {
+        Some(k) => k.to_string(),
+        None => {
+            // Conductor path: plain text + stream:true — prefill round trip
+            // (buffered), then stream the decode.
+            let conductor = conductor?;
+            let text = v.get("text").and_then(Value::as_str)?;
+            match prefill_roundtrip(conductor, text, &sampling) {
+                Ok(key) => key,
+                Err(resp) => return Some(write_http_response(stream, &resp)),
+            }
+        }
+    };
+    Some(pd_stream_decode(engine, &key, sampling, stream))
+}
+
+/// Conductor round trip: prefill the prompt on the prefill worker, then
+/// decode locally from the returned KV bundle key.
+fn conduct<E: ServingEngine>(engine: &mut E, conductor: &Conductor, req: &WriteRequest) -> HttpResponse {
+    match prefill_roundtrip(conductor, &req.text, &req.sampling) {
+        Ok(key) => pd_decode_response(engine, &key, req.sampling.clone()),
+        Err(resp) => resp,
+    }
+}
+
+/// POST the prompt to the prefill worker and return its KV bundle key.
+fn prefill_roundtrip(
+    conductor: &Conductor,
+    text: &str,
+    sampling: &SamplingParams,
+) -> Result<String, HttpResponse> {
+    let body = Value::Object(vec![
+        ("text".to_string(), Value::String(text.to_string())),
+        ("sampling_params".to_string(), sampling_json(sampling)),
+    ])
+    .to_json();
+    let (status, resp) = match http_client::request(
+        &conductor.addr,
+        "POST",
+        "/prefill",
+        Some(&body),
+        http_client::DEFAULT_TIMEOUT,
+    ) {
+        Ok(pair) => pair,
+        Err(e) => {
+            return Err(HttpResponse::json(
+                502,
+                &Value::Object(vec![
+                    ("error".to_string(), Value::String("prefill_unreachable".into())),
+                    ("detail".to_string(), Value::String(e.to_string())),
+                ])
+                .to_json(),
+            ))
+        }
+    };
+    if status != 200 {
+        return Err(HttpResponse::json(
+            502,
+            &Value::Object(vec![
+                ("error".to_string(), Value::String("prefill_failed".into())),
+                ("status".to_string(), Value::Number(status as f64)),
+                ("detail".to_string(), Value::String(resp)),
+            ])
+            .to_json(),
+        ));
+    }
+    json::parse(&resp)
+        .ok()
+        .and_then(|v| v.get("kv_key").and_then(Value::as_str).map(str::to_string))
+        .ok_or_else(|| {
+            HttpResponse::json(
+                502,
+                r#"{"error":"prefill_failed","detail":"no kv_key in prefill response"}"#,
+            )
+        })
+}
+
+/// The `sampling_params` JSON shape the prefill worker parses back.
+fn sampling_json(p: &SamplingParams) -> Value {
+    Value::Object(vec![
+        ("max_tokens".to_string(), Value::Number(p.max_tokens as f64)),
+        ("temperature".to_string(), Value::Number(p.temperature as f64)),
+        ("top_p".to_string(), Value::Number(p.top_p as f64)),
+        ("top_k".to_string(), Value::Number(p.top_k as f64)),
+        (
+            "frequency_penalty".to_string(),
+            Value::Number(p.frequency_penalty as f64),
+        ),
+        (
+            "presence_penalty".to_string(),
+            Value::Number(p.presence_penalty as f64),
+        ),
+        ("seed".to_string(), Value::Number(p.seed as f64)),
+    ])
+}
+
+/// Map a PD error to the matching HTTP response.
+fn pd_error_response(kv_key: &str, e: PdError) -> HttpResponse {
+    match e {
+        PdError::KvMiss(_) => HttpResponse::json(
+            404,
+            &Value::Object(vec![
+                ("error".to_string(), Value::String("kv_miss".into())),
+                ("kv_key".to_string(), Value::String(kv_key.to_string())),
+            ])
+            .to_json(),
+        ),
+        PdError::Rejected(out) => rejection_response(&out),
+        other => HttpResponse::json(
+            502,
+            &Value::Object(vec![
+                ("error".to_string(), Value::String("pd_decode_failed".into())),
+                ("detail".to_string(), Value::String(other.to_string())),
+            ])
+            .to_json(),
+        ),
+    }
 }
 
 fn build_chat_request(v: Value) -> Option<WriteRequest> {
@@ -757,6 +1285,7 @@ pub fn handle_conn<E: ServingEngine>(
     engine: &std::sync::Mutex<E>,
     proxy: Option<&Proxy>,
     triage: Option<&crate::triage::Triage>,
+    conductor: Option<&Conductor>,
     method: &str,
     path: &str,
     body: &str,
@@ -777,9 +1306,52 @@ pub fn handle_conn<E: ServingEngine>(
             );
         }
     }
+    // PD conductor hoist: run the prefill round trip WITHOUT holding the
+    // engine lock, so a long prefill never blocks in-flight decodes on this
+    // worker (measured: a 738-token prefill added ~37s to a queued request
+    // when the conductor prefetched under the lock). The body is rewritten
+    // from {text, ...} to {kv_key, ...} and falls through to the normal
+    // locked decode path below.
+    let mut owned_body = body.to_string();
+    if proxy.is_none() && conductor.is_some() && method == "POST" && path == "/generate" {
+        if let Ok(v) = json::parse(body) {
+            let has_key = v.get("kv_key").and_then(Value::as_str).is_some();
+            let text = v.get("text").and_then(Value::as_str).map(str::to_string);
+            if !has_key {
+                if let (Some(c), Some(text)) = (conductor, text) {
+                    let sampling = v
+                        .get("sampling_params")
+                        .map(parse_sampling)
+                        .unwrap_or_default();
+                    match prefill_roundtrip(c, &text, &sampling) {
+                        Ok(key) => {
+                            let mut fields: Vec<(String, Value)> = match v {
+                                Value::Object(fields) => fields
+                                    .into_iter()
+                                    .filter(|(k, _)| k != "text")
+                                    .collect(),
+                                _ => Vec::new(),
+                            };
+                            fields.push(("kv_key".to_string(), Value::String(key)));
+                            owned_body = Value::Object(fields).to_json();
+                        }
+                        Err(resp) => return write_http_response(stream, &resp),
+                    }
+                }
+            }
+        }
+    }
+    let body = owned_body.as_str();
     let resp = {
         let mut guard = engine.lock().unwrap();
-        handle_with_triage(&mut *guard, proxy, triage, method, path, Some(body))
+        // PD streaming: /generate with stream:true on a PD-wired engine emits
+        // SSE frames per token instead of one buffered JSON.
+        if proxy.is_none() && method == "POST" && path == "/generate" && wants_stream(Some(body)) {
+            if let Some(result) = pd_stream(&mut *guard, conductor, body, stream) {
+                return result;
+            }
+        }
+        handle_with_pd(&mut *guard, proxy, triage, conductor, method, path, Some(body))
     };
     write_http_response(stream, &resp)
 }
@@ -813,6 +1385,14 @@ pub fn read_http_request(stream: &mut TcpStream) -> std::io::Result<(String, Str
     Ok((method, path, String::from_utf8_lossy(&body).into_owned()))
 }
 
+/// Chunked framing so relays (the PD router) can forward frames live
+/// instead of buffering to EOF.
+fn write_chunk(stream: &mut TcpStream, payload: &[u8]) -> std::io::Result<()> {
+    stream.write_all(format!("{:x}\r\n", payload.len()).as_bytes())?;
+    stream.write_all(payload)?;
+    stream.write_all(b"\r\n")
+}
+
 /// Status-line reason phrase for the codes pagoda emits or relays.
 fn reason_phrase(status: u16) -> &'static str {
     match status {
@@ -835,6 +1415,306 @@ pub fn write_http_response(stream: &mut TcpStream, resp: &HttpResponse) -> std::
     );
     stream.write_all(head.as_bytes())?;
     stream.write_all(resp.body.as_bytes())
+}
+
+/// Concurrent serving: the engine moves onto a scheduler-actor thread
+/// ([Engine::into_actor]) and HTTP handlers submit generation requests
+/// through it, so in-flight requests interleave in one continuous-batching
+/// loop instead of serializing behind a process-wide mutex. Unified-role
+/// engines only; PD roles keep the lock-based [run_full] path (PD
+/// concurrency comes from process separation, not intra-process overlap).
+///
+/// Endpoints: GET /health, GET /stats, POST /generate and
+/// /v1/chat/completions (buffered JSON, or SSE with `"stream":true` on
+/// /generate — same frame format as the PD stream path), plus the
+/// /checkpoint* lifecycle. An optional triage gate (Laya System-1) runs on
+/// the generation endpoints before any compute is spent.
+pub fn run_concurrent<M, T>(
+    engine: Engine<M, T>,
+    addr: &str,
+    triage: Option<Arc<crate::triage::Triage>>,
+) -> std::io::Result<()>
+where
+    M: ModelEngine + Send + 'static,
+    T: Tokenizer + Send + 'static,
+{
+    if engine.pd_role() != PdRole::Unified {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "run_concurrent serves the unified role; PD roles use run_full",
+        ));
+    }
+    let handle = engine.into_actor();
+    let listener = TcpListener::bind(addr)?;
+    eprintln!(
+        "pagoda serving on http://{} (concurrent scheduler)",
+        listener.local_addr()?
+    );
+    for conn in listener.incoming() {
+        match conn {
+            Ok(mut stream) => {
+                let handle = handle.clone();
+                let triage = triage.clone();
+                std::thread::spawn(move || {
+                    let _ = stream.set_nodelay(true);
+                    let parsed = read_http_request(&mut stream);
+                    let result = match parsed {
+                        Ok((method, path, body)) => handle_conn_concurrent(
+                            &handle,
+                            triage.as_deref(),
+                            &method,
+                            &path,
+                            &body,
+                            &mut stream,
+                        ),
+                        Err(_) => write_http_response(
+                            &mut stream,
+                            &HttpResponse::json(400, r#"{"error":"bad request"}"#),
+                        ),
+                    };
+                    let _ = result;
+                });
+            }
+            Err(e) => eprintln!("accept error: {e}"),
+        }
+    }
+    Ok(())
+}
+
+fn handle_conn_concurrent(
+    handle: &EngineHandle,
+    triage: Option<&crate::triage::Triage>,
+    method: &str,
+    path: &str,
+    body: &str,
+    stream: &mut TcpStream,
+) -> std::io::Result<()> {
+    match (method, path) {
+        ("GET", "/health") => {
+            write_http_response(stream, &HttpResponse::json(200, r#"{"status":"ok"}"#))
+        }
+        ("GET", "/stats") => {
+            let s = handle.stats();
+            let mut fields = base_stats_fields(&s);
+            fields.push(("mode".to_string(), Value::String("concurrent".to_string())));
+            let body = Value::Object(fields).to_json();
+            write_http_response(stream, &HttpResponse::json(200, &body))
+        }
+        ("POST", "/generate") => {
+            let (_, escalation) = triage_decide(triage, path, Some(body));
+            if let Some(escalation) = escalation {
+                return write_http_response(stream, &escalation);
+            }
+            let stream_wanted = wants_stream(Some(body));
+            let req = json::parse(body).ok().and_then(build_generate_request);
+            let Some(req) = req else {
+                return write_http_response(
+                    stream,
+                    &HttpResponse::json(
+                        400,
+                        r#"{"error":"invalid request; expected {\"text\": ...}"}"#,
+                    ),
+                );
+            };
+            if stream_wanted {
+                return actor_stream(handle.subscribe(req), stream);
+            }
+            let out = handle.generate(req);
+            if out.finish_reason == FinishReason::Rejected {
+                return write_http_response(stream, &rejection_response(&out));
+            }
+            write_http_response(
+                stream,
+                &HttpResponse::json(200, &generate_response(&out).to_json()),
+            )
+        }
+        ("POST", "/v1/chat/completions") => {
+            let (_, escalation) = triage_decide(triage, path, Some(body));
+            if let Some(escalation) = escalation {
+                return write_http_response(stream, &escalation);
+            }
+            let req = json::parse(body).ok().and_then(build_chat_request);
+            let Some(req) = req else {
+                return write_http_response(
+                    stream,
+                    &HttpResponse::json(400, r#"{"error":"invalid messages payload"}"#),
+                );
+            };
+            let out = handle.generate(req);
+            if out.finish_reason == FinishReason::Rejected {
+                return write_http_response(stream, &rejection_response(&out));
+            }
+            write_http_response(
+                stream,
+                &HttpResponse::json(200, &chat_response(&out).to_json()),
+            )
+        }
+        ("POST", "/checkpoint") => {
+            let text = json::parse(body)
+                .ok()
+                .and_then(|v| v.get("text").and_then(Value::as_str).map(str::to_string));
+            let Some(text) = text else {
+                return write_http_response(
+                    stream,
+                    &HttpResponse::json(400, r#"{"error":"expected {\"text\": ...}"}"#),
+                );
+            };
+            let Some(id) = handle.checkpoint_create(text) else {
+                return write_http_response(
+                    stream,
+                    &HttpResponse::json(503, r#"{"error":"engine unavailable"}"#),
+                );
+            };
+            write_http_response(
+                stream,
+                &HttpResponse::json(
+                    200,
+                    &Value::Object(vec![(
+                        "checkpoint_id".to_string(),
+                        Value::Number(id as f64),
+                    )])
+                    .to_json(),
+                ),
+            )
+        }
+        ("POST", "/checkpoint/delete") => {
+            let id = json::parse(body)
+                .ok()
+                .and_then(|v| v.get("checkpoint_id").and_then(Value::as_usize))
+                .map(|x| x as u64);
+            let Some(id) = id else {
+                return write_http_response(
+                    stream,
+                    &HttpResponse::json(400, r#"{"error":"expected {\"checkpoint_id\": N}"}"#),
+                );
+            };
+            let deleted = handle.checkpoint_drop(id);
+            write_http_response(
+                stream,
+                &HttpResponse::json(
+                    200,
+                    &Value::Object(vec![("deleted".to_string(), Value::Bool(deleted))]).to_json(),
+                ),
+            )
+        }
+        ("POST", "/checkpoint/generate") => {
+            let parsed = json::parse(body).ok().and_then(|v| {
+                let id = v.get("checkpoint_id")?.as_usize()? as u64;
+                let text = v.get("text")?.as_str()?.to_string();
+                let sampling = v
+                    .get("sampling_params")
+                    .map(parse_sampling)
+                    .unwrap_or_default();
+                Some((id, text, sampling))
+            });
+            let Some((id, text, sampling)) = parsed else {
+                return write_http_response(
+                    stream,
+                    &HttpResponse::json(
+                        400,
+                        r#"{"error":"expected {\"checkpoint_id\": N, \"text\": ...}"}"#,
+                    ),
+                );
+            };
+            let Some(events) = handle.checkpoint_generate(id, text, sampling) else {
+                return write_http_response(
+                    stream,
+                    &HttpResponse::json(404, r#"{"error":"checkpoint not found"}"#),
+                );
+            };
+            if wants_stream(Some(body)) {
+                return actor_stream(events, stream);
+            }
+            let mut done = None;
+            for event in events {
+                if let StreamEvent::Done(out) = event {
+                    done = Some(out);
+                }
+            }
+            let out = done.expect("actor delivers Done before closing");
+            if out.finish_reason == FinishReason::Rejected {
+                return write_http_response(stream, &rejection_response(&out));
+            }
+            let mut resp = generate_response(&out);
+            if let Value::Object(ref mut entries) = resp {
+                entries.push(("checkpoint_id".to_string(), Value::Number(id as f64)));
+            }
+            write_http_response(stream, &HttpResponse::json(200, &resp.to_json()))
+        }
+        _ => write_http_response(stream, &HttpResponse::json(404, r#"{"error":"not found"}"#)),
+    }
+}
+
+/// SSE relay for the concurrent server: subscribe to the actor's per-token
+/// events and forward each as one chunked frame. A rejected request produces
+/// a plain JSON error (head unwritten), mirroring the PD stream path.
+fn actor_stream(
+    events: std::sync::mpsc::Receiver<StreamEvent>,
+    stream: &mut TcpStream,
+) -> std::io::Result<()> {
+    const SSE_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+    let mut wrote_head = false;
+    let mut frame_id = 0usize;
+    for event in events {
+        match event {
+            StreamEvent::Token(piece) => {
+                if !wrote_head {
+                    stream.write_all(SSE_HEAD.as_bytes())?;
+                    wrote_head = true;
+                }
+                let frame = format!(
+                    "data: {}\n\n",
+                    Value::Object(vec![
+                        ("id".to_string(), Value::Number(frame_id as f64)),
+                        ("token".to_string(), Value::String(piece)),
+                    ])
+                    .to_json()
+                );
+                write_chunk(stream, frame.as_bytes())?;
+                frame_id += 1;
+            }
+            StreamEvent::Done(out) => {
+                if out.finish_reason == FinishReason::Rejected && !wrote_head {
+                    return write_http_response(stream, &rejection_response(&out));
+                }
+                if !wrote_head {
+                    stream.write_all(SSE_HEAD.as_bytes())?;
+                }
+                let final_frame = format!(
+                    "data: {}\n\n",
+                    Value::Object(vec![
+                        (
+                            "finish_reason".to_string(),
+                            Value::String(out.finish_reason.to_string()),
+                        ),
+                        (
+                            "prompt_tokens".to_string(),
+                            Value::Number(out.prompt_tokens as f64),
+                        ),
+                        (
+                            "output_tokens".to_string(),
+                            Value::Number(out.output_token_ids.len() as f64),
+                        ),
+                    ])
+                    .to_json()
+                );
+                write_chunk(stream, final_frame.as_bytes())?;
+                write_chunk(stream, b"data: [DONE]\n\n")?;
+                return stream.write_all(b"0\r\n\r\n");
+            }
+        }
+    }
+    // Channel closed without Done: the actor went away mid-request.
+    if wrote_head {
+        write_chunk(stream, b"data: {\"finish_reason\":\"Fault\"}\n\n")?;
+        write_chunk(stream, b"data: [DONE]\n\n")?;
+        stream.write_all(b"0\r\n\r\n")
+    } else {
+        write_http_response(
+            stream,
+            &HttpResponse::json(500, r#"{"error":"scheduler actor unavailable"}"#),
+        )
+    }
 }
 
 /// Blocking accept loop. Spawns one thread per connection.
@@ -868,6 +1748,21 @@ pub fn run_with_triage<E>(
 where
     E: ServingEngine + Send + 'static,
 {
+    run_full(engine, addr, proxy, triage, None)
+}
+
+/// [`run_with_triage`] plus an optional PD [`Conductor`] for decode-role
+/// servers that conduct plain-text requests through a prefill worker.
+pub fn run_full<E>(
+    engine: Arc<Mutex<E>>,
+    addr: &str,
+    proxy: Option<Arc<Proxy>>,
+    triage: Option<Arc<crate::triage::Triage>>,
+    conductor: Option<Arc<Conductor>>,
+) -> std::io::Result<()>
+where
+    E: ServingEngine + Send + 'static,
+{
     let listener = TcpListener::bind(addr)?;
     let local = listener.local_addr()?;
     match &proxy {
@@ -881,12 +1776,16 @@ where
             if t.shadow { " (shadow)" } else { "" }
         );
     }
+    if let Some(c) = &conductor {
+        eprintln!("pd conductor: prefill via {}", c.prefill_url());
+    }
     for conn in listener.incoming() {
         match conn {
             Ok(mut stream) => {
                 let engine = Arc::clone(&engine);
                 let proxy = proxy.clone();
                 let triage = triage.clone();
+                let conductor = conductor.clone();
                 std::thread::spawn(move || {
                     let _ = stream.set_nodelay(true);
                     let result = read_http_request(&mut stream);
@@ -904,6 +1803,7 @@ where
                         &engine,
                         proxy.as_deref(),
                         triage.as_deref(),
+                        conductor.as_deref(),
                         &method,
                         &path,
                         &body,

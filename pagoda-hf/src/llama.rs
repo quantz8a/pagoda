@@ -22,12 +22,13 @@
 //! * [`OwnedLlama::forward_tokens`] — single-sequence prefill / suffix feed
 //!   with a square causal mask (any length, any position).
 //! * [`OwnedLlama::batch_decode`] — the continuous-batching step: many
-//!   sessions, one fresh token each, one forward pass. Per-session KV
-//!   histories are padded to the longest in the batch and masked out, so
-//!   sequences of different lengths share the projection matmuls.
+//!   sessions, one fresh token each, one forward pass. Attention runs per
+//!   session over exactly its own KV history (variable-length, no padding
+//!   waste); the projection and FFN matmuls are shared across the batch.
 
 use anyhow::Result;
 use candle_core::{D, DType, Device, IndexOp, Module, Tensor};
+use std::sync::atomic::{AtomicU32, Ordering};
 use candle_nn::{embedding, linear_no_bias, rms_norm, Embedding, Linear, RmsNorm, VarBuilder};
 use candle_transformers::models::llama::{Config, Llama3RopeConfig, Llama3RopeType};
 use candle_transformers::utils::repeat_kv;
@@ -92,6 +93,344 @@ impl SessionKv {
 impl crate::vault::VaultEntry for SessionKv {
     fn bytes(&self) -> usize {
         self.bytes()
+    }
+}
+
+/// Wire magic for [`SessionKv::export_bytes`] payloads ("PDKV").
+const KV_WIRE_MAGIC: u32 = 0x5044_4B56;
+/// v1: layer payload always F32, the dtype field informational only.
+/// v2: the dtype field is the wire encoding (0 = f32-le, 1 = f16-le).
+const KV_WIRE_VERSION: u32 = 1;
+const KV_WIRE_VERSION_V2: u32 = 2;
+
+/// Wire encoding for exported KV (0 = f32, 1 = f16), process-wide. F16
+/// halves PD transfer volume at the cost of a lossy roundtrip; the payload
+/// is self-describing, so only the prefill side sets this.
+pub static KV_WIRE_DTYPE: AtomicU32 = AtomicU32::new(0);
+
+/// Select the KV wire encoding for [`SessionKv::export_bytes`].
+pub fn set_kv_wire_f16(on: bool) {
+    KV_WIRE_DTYPE.store(if on { 1 } else { 0 }, Ordering::Relaxed);
+}
+
+/// f32 -> IEEE-754 half-precision bits (round-to-nearest-even).
+fn f32_to_f16_bits(x: f32) -> u16 {
+    let bits = x.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exp = ((bits >> 23) & 0xff) as i32;
+    let mant = bits & 0x007f_ffff;
+    if exp == 255 {
+        return sign | if mant == 0 { 0x7c00 } else { 0x7e00 };
+    }
+    let half_exp = exp - 127 + 15;
+    if half_exp >= 31 {
+        return sign | 0x7c00; // overflow -> inf
+    }
+    if half_exp <= 0 {
+        if half_exp < -10 {
+            return sign; // underflow -> zero
+        }
+        let mant = mant | 0x0080_0000;
+        let shift = (14 - half_exp) as u32;
+        let mut half_mant = mant >> shift;
+        let rem = mant & ((1u32 << shift) - 1);
+        let halfway = 1u32 << (shift - 1);
+        if rem > halfway || (rem == halfway && half_mant & 1 == 1) {
+            half_mant += 1;
+        }
+        return sign | half_mant as u16;
+    }
+    let mut half = sign | ((half_exp as u16) << 10) | ((mant >> 13) as u16);
+    let rem = mant & 0x1fff;
+    if rem > 0x1000 || (rem == 0x1000 && half & 1 == 1) {
+        half = half.wrapping_add(1);
+    }
+    half
+}
+
+/// IEEE-754 half-precision bits -> f32 (exact).
+fn f16_bits_to_f32(h: u16) -> f32 {
+    let sign = ((h & 0x8000) as u32) << 16;
+    let exp = ((h >> 10) & 0x1f) as u32;
+    let mant = (h & 0x3ff) as u32;
+    let bits = if exp == 0 {
+        if mant == 0 {
+            sign
+        } else {
+            // Subnormal: normalize into the f32 exponent range.
+            let mut e = 127 - 15 + 1;
+            let mut m = mant;
+            while m & 0x400 == 0 {
+                m <<= 1;
+                e -= 1;
+            }
+            m &= 0x3ff;
+            sign | (e << 23) | (m << 13)
+        }
+    } else if exp == 31 {
+        sign | 0x7f80_0000 | (mant << 13) // inf / nan
+    } else {
+        sign | (((exp as i32 - 15 + 127) as u32) << 23) | (mant << 13)
+    };
+    f32::from_bits(bits)
+}
+
+
+
+fn push_u32(out: &mut Vec<u8>, v: u32) {
+    out.extend_from_slice(&v.to_le_bytes());
+}
+
+fn read_u32(buf: &[u8], pos: &mut usize) -> Result<u32> {
+    let end = *pos + 4;
+    anyhow::ensure!(end <= buf.len(), "kv payload truncated");
+    let v = u32::from_le_bytes(buf[*pos..end].try_into().unwrap());
+    *pos = end;
+    Ok(v)
+}
+
+impl SessionKv {
+    /// Serialize the cache plus the session's last-position logits into a
+    /// flat little-endian payload for PD transfer (prefill worker side).
+    ///
+    /// Tensors are moved to the CPU and widened to F32 on the wire: every
+    /// F16/BF16 value is exactly representable in F32, so the round trip is
+    /// bit-identical when the decode side casts back to its compute dtype.
+    /// Format: magic, version, token count, layer count, logits (len + f32s),
+    /// then per layer a present flag followed by (kv_heads, head_dim,
+    /// source-dtype id) and the K then V values, F32 LE.
+    pub fn export_bytes(&self, last_logits: Option<&[f32]>) -> Option<Vec<u8>> {
+        let mut out = Vec::new();
+        push_u32(&mut out, KV_WIRE_MAGIC);
+        push_u32(&mut out, KV_WIRE_VERSION_V2);
+        push_u32(&mut out, self.len as u32);
+        push_u32(&mut out, self.layers.len() as u32);
+        let logits = last_logits.unwrap_or(&[]);
+        push_u32(&mut out, logits.len() as u32);
+        for x in logits {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+        for layer in &self.layers {
+            let Some((k, v)) = layer else {
+                push_u32(&mut out, 0);
+                continue;
+            };
+            push_u32(&mut out, 1);
+            let dims = k.dims();
+            if dims.len() != 4 || v.dims() != dims {
+                return None;
+            }
+            push_u32(&mut out, dims[1] as u32); // kv heads
+            push_u32(&mut out, dims[3] as u32); // head dim
+            let wire_dtype = KV_WIRE_DTYPE.load(Ordering::Relaxed);
+            push_u32(&mut out, wire_dtype);
+            for t in [k, v] {
+                let flat = t
+                    .to_device(&Device::Cpu)
+                    .ok()?
+                    .flatten_all()
+                    .ok()?
+                    .to_dtype(DType::F32)
+                    .ok()?
+                    .to_vec1::<f32>()
+                    .ok()?;
+                if wire_dtype == 1 {
+                    for x in flat {
+                        out.extend_from_slice(&f32_to_f16_bits(x).to_le_bytes());
+                    }
+                } else {
+                    for x in flat {
+                        out.extend_from_slice(&x.to_le_bytes());
+                    }
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// Rebuild a cache (and the stashed last-position logits) from
+    /// [`SessionKv::export_bytes`] payload, on `device` in the decode worker's
+    /// compute `dtype`.
+    pub fn import_bytes(
+        bytes: &[u8],
+        device: &Device,
+        dtype: DType,
+    ) -> Result<(SessionKv, Option<Vec<f32>>)> {
+        let mut pos = 0usize;
+        anyhow::ensure!(
+            read_u32(bytes, &mut pos)? == KV_WIRE_MAGIC,
+            "bad kv payload magic"
+        );
+        let version = read_u32(bytes, &mut pos)?;
+        anyhow::ensure!(
+            version == KV_WIRE_VERSION || version == KV_WIRE_VERSION_V2,
+            "unsupported kv payload version {version}"
+        );
+        let len = read_u32(bytes, &mut pos)? as usize;
+        let num_layers = read_u32(bytes, &mut pos)? as usize;
+        let logits_len = read_u32(bytes, &mut pos)? as usize;
+        let mut logits = Vec::with_capacity(logits_len);
+        for _ in 0..logits_len {
+            anyhow::ensure!(pos + 4 <= bytes.len(), "kv payload truncated");
+            logits.push(f32::from_le_bytes(bytes[pos..pos + 4].try_into().unwrap()));
+            pos += 4;
+        }
+        let mut layers = Vec::with_capacity(num_layers);
+        for _ in 0..num_layers {
+            let present = read_u32(bytes, &mut pos)?;
+            if present == 0 {
+                layers.push(None);
+                continue;
+            }
+            let kv_heads = read_u32(bytes, &mut pos)? as usize;
+            let head_dim = read_u32(bytes, &mut pos)? as usize;
+            let wire_dtype = read_u32(bytes, &mut pos)?;
+            let count = kv_heads * len * head_dim;
+            let f16_wire = version >= KV_WIRE_VERSION_V2 && wire_dtype == 1;
+            let mut tensors = Vec::with_capacity(2);
+            for _ in 0..2 {
+                let byte_len = count * if f16_wire { 2 } else { 4 };
+                anyhow::ensure!(pos + byte_len <= bytes.len(), "kv payload truncated");
+                let mut vals = Vec::with_capacity(count);
+                if f16_wire {
+                    for chunk in bytes[pos..pos + byte_len].chunks_exact(2) {
+                        vals.push(f16_bits_to_f32(u16::from_le_bytes(
+                            chunk.try_into().unwrap(),
+                        )));
+                    }
+                } else {
+                    for chunk in bytes[pos..pos + byte_len].chunks_exact(4) {
+                        vals.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+                    }
+                }
+                pos += byte_len;
+                let t = Tensor::from_vec(vals, (1, kv_heads, len, head_dim), &Device::Cpu)?
+                    .to_dtype(dtype)?
+                    .to_device(device)?;
+                tensors.push(t);
+            }
+            let mut it = tensors.into_iter();
+            layers.push(Some((
+                it.next().expect("k tensor"),
+                it.next().expect("v tensor"),
+            )));
+        }
+        let logits = if logits.is_empty() { None } else { Some(logits) };
+        Ok((SessionKv { layers, len }, logits))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Serializes tests that touch the process-wide KV wire dtype flag.
+    static WIRE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn f16_bits_exact_and_tolerant() {
+        for x in [0.0f32, 1.0, -1.0, 0.5, -0.5, 65504.0, -65504.0] {
+            assert_eq!(f16_bits_to_f32(f32_to_f16_bits(x)), x, "exact {x}");
+        }
+        for x in [0.1f32, 0.3333, 100.25, -1234.5] {
+            let back = f16_bits_to_f32(f32_to_f16_bits(x));
+            let tol = x.abs() * 0.001 + 1e-6;
+            assert!((back - x).abs() <= tol, "{x} -> {back}");
+        }
+        assert_eq!(f16_bits_to_f32(f32_to_f16_bits(f32::INFINITY)), f32::INFINITY);
+        assert!(f16_bits_to_f32(f32_to_f16_bits(f32::NAN)).is_nan());
+    }
+
+    #[test]
+    fn session_kv_bytes_roundtrip_f16_wire() {
+        let _guard = WIRE_LOCK.lock().unwrap();
+        let dev = Device::Cpu;
+        let k0 = Tensor::rand(0f32, 1f32, (1, 2, 5, 4), &dev).unwrap();
+        let v0 = Tensor::rand(0f32, 1f32, (1, 2, 5, 4), &dev).unwrap();
+        let kv = SessionKv {
+            layers: vec![Some((k0.clone(), v0.clone()))],
+            len: 5,
+        };
+        let logits = vec![0.25f32, -1.5, 3.75];
+
+        set_kv_wire_f16(true);
+        let bytes = kv.export_bytes(Some(&logits)).expect("export f16");
+        set_kv_wire_f16(false);
+        let bytes32 = kv.export_bytes(Some(&logits)).expect("export f32");
+        // Tensor bytes halve on the F16 wire (2 heads x 5 tokens x 4 dim x K+V).
+        assert_eq!(bytes.len(), bytes32.len() - 2 * 5 * 4 * 2 * 2);
+
+        let (back, back_logits) = SessionKv::import_bytes(&bytes, &dev, DType::F32).unwrap();
+        assert_eq!(back.len(), 5);
+        // Logits stay F32-exact even on the F16 wire.
+        assert_eq!(back_logits.as_deref(), Some(logits.as_slice()));
+        let (k0b, _) = back.layers[0].as_ref().unwrap();
+        let orig = k0.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+        let got = k0b.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+        for (a, b) in orig.iter().zip(&got) {
+            assert!((a - b).abs() <= 0.001, "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn session_kv_bytes_roundtrip() {
+        let _guard = WIRE_LOCK.lock().unwrap();
+        let dev = Device::Cpu;
+        let k0 = Tensor::rand(0f32, 1f32, (1, 2, 5, 4), &dev).unwrap();
+        let v0 = Tensor::rand(0f32, 1f32, (1, 2, 5, 4), &dev).unwrap();
+        let k1 = Tensor::rand(0f32, 1f32, (1, 2, 5, 4), &dev)
+            .unwrap()
+            .to_dtype(DType::F16)
+            .unwrap();
+        let v1 = Tensor::rand(0f32, 1f32, (1, 2, 5, 4), &dev)
+            .unwrap()
+            .to_dtype(DType::F16)
+            .unwrap();
+        let kv = SessionKv {
+            layers: vec![Some((k0.clone(), v0.clone())), None, Some((k1.clone(), v1))],
+            len: 5,
+        };
+        let logits = vec![0.25f32, -1.5, 3.75];
+        let bytes = kv.export_bytes(Some(&logits)).expect("export");
+
+        // F32 target: bit-identical values.
+        let (back, back_logits) = SessionKv::import_bytes(&bytes, &dev, DType::F32).unwrap();
+        assert_eq!(back.len(), 5);
+        assert_eq!(back.layers.len(), 3);
+        assert!(back.layers[1].is_none());
+        assert_eq!(back_logits.as_deref(), Some(logits.as_slice()));
+        let (k0b, v0b) = back.layers[0].as_ref().unwrap();
+        assert_eq!(
+            k0.flatten_all().unwrap().to_vec1::<f32>().unwrap(),
+            k0b.flatten_all().unwrap().to_vec1::<f32>().unwrap()
+        );
+        assert_eq!(
+            v0.flatten_all().unwrap().to_vec1::<f32>().unwrap(),
+            v0b.flatten_all().unwrap().to_vec1::<f32>().unwrap()
+        );
+
+        // F16 source round-trips exactly through the F32 wire into F16.
+        let (back16, _) = SessionKv::import_bytes(&bytes, &dev, DType::F16).unwrap();
+        let (k1b, _) = back16.layers[2].as_ref().unwrap();
+        assert_eq!(k1b.dtype(), DType::F16);
+        assert_eq!(
+            k1.flatten_all()
+                .unwrap()
+                .to_dtype(DType::F32)
+                .unwrap()
+                .to_vec1::<f32>()
+                .unwrap(),
+            k1b.flatten_all()
+                .unwrap()
+                .to_dtype(DType::F32)
+                .unwrap()
+                .to_vec1::<f32>()
+                .unwrap()
+        );
+
+        // Corrupt payloads fail cleanly.
+        assert!(SessionKv::import_bytes(&bytes[..12], &dev, DType::F32).is_err());
+        assert!(SessionKv::import_bytes(b"garbage", &dev, DType::F32).is_err());
     }
 }
 
@@ -283,8 +622,6 @@ pub struct OwnedLlama {
     lm_head: Linear,
     cos: Tensor, // [max_position_embeddings, head_dim/2]
     sin: Tensor,
-    n_kv_heads: usize,
-    head_dim: usize,
     max_position_embeddings: usize,
     device: Device,
 }
@@ -319,8 +656,6 @@ impl OwnedLlama {
             lm_head,
             cos,
             sin,
-            n_kv_heads: config.num_key_value_heads,
-            head_dim,
             max_position_embeddings: config.max_position_embeddings,
             device: device.clone(),
         })
@@ -368,11 +703,12 @@ impl OwnedLlama {
     /// token each, advanced in a single forward pass. Returns one logits
     /// vector per session, in order.
     ///
-    /// Per-session KV histories differ in length, so K/V are padded to the
-    /// longest history and the padding is masked out of the attention
-    /// scores. That gather is O(batch * history) per step; a paged-attention
-    /// kernel that reads the engine's KV blocks directly is the roadmap
-    /// successor.
+    /// Per-session KV histories differ in length; attention runs per session
+    /// over exactly its own history (variable-length, no padding, no mask —
+    /// the query row is the newest position, so the whole history is
+    /// visible) while the projection and FFN matmuls stay batched. A
+    /// paged-attention kernel that reads the engine's KV blocks directly is
+    /// the roadmap successor.
     pub fn batch_decode(&self, tokens: &[u32], kvs: &mut [&mut SessionKv]) -> Result<Vec<Vec<f32>>> {
         let b = kvs.len();
         anyhow::ensure!(b >= 2, "batch_decode needs at least two sessions");
@@ -399,17 +735,8 @@ impl OwnedLlama {
         )?;
         let cos_rows = self.cos.index_select(&positions, 0)?.to_dtype(x.dtype())?;
         let sin_rows = self.sin.index_select(&positions, 0)?.to_dtype(x.dtype())?;
-        let lmax = work_refs.iter().map(|kv| kv.len + 1).max().unwrap_or(0);
-        // Additive padding mask: 0 over the real history, -inf over padding.
-        let mut mask = vec![0f32; b * lmax];
-        for (row, kv) in work_refs.iter().enumerate() {
-            for j in (kv.len + 1)..lmax {
-                mask[row * lmax + j] = f32::NEG_INFINITY;
-            }
-        }
-        let mask = Tensor::new(mask, &self.device)?.reshape((b, 1, 1, lmax))?;
         for (layer, block) in self.blocks.iter().enumerate() {
-            x = block.forward_batch(&x, layer, &mut work_refs, self, &cos_rows, &sin_rows, &mask, lmax)?;
+            x = block.forward_batch(&x, layer, &mut work_refs, &cos_rows, &sin_rows)?;
         }
         let x = self.ln_f.forward(&x)?;
         let logits = self.lm_head.forward(&x)?.to_dtype(DType::F32)?; // [B, 1, vocab]
@@ -491,17 +818,14 @@ impl Block {
     }
 
     /// Batched decode layer: per-row RoPE positions, per-session K/V
-    /// write-back, then a padded + masked batch attention.
+    /// write-back, then variable-length per-session attention.
     fn forward_batch(
         &self,
         x: &Tensor,
         layer: usize,
         kvs: &mut [&mut SessionKv],
-        model: &OwnedLlama,
         cos_rows: &Tensor,
         sin_rows: &Tensor,
-        mask: &Tensor,
-        lmax: usize,
     ) -> Result<Tensor> {
         let (b, seq, _hidden) = x.dims3()?;
         debug_assert_eq!(seq, 1, "batched decode feeds exactly one token");
@@ -520,28 +844,18 @@ impl Block {
             };
             kv.layers[layer] = Some((k, v));
         }
-        // Pad every history to the longest one, drop the per-session leading
-        // dim, and stack into the batch: [1, kv, lmax, hd] x B to
-        // [B, kv, lmax, hd].
-        let mut ks = Vec::with_capacity(b);
-        let mut vs = Vec::with_capacity(b);
-        for kv in kvs.iter() {
+        // Variable-length attention: each session attends over exactly its
+        // own history (no padding, no mask — the query row is the newest
+        // position, so the whole history is visible). Same math as the
+        // padded-then-masked batch this replaces, minus the pad waste;
+        // projections stay batched. Rows concat back into [B, h, 1, hd].
+        let mut rows = Vec::with_capacity(b);
+        for (row, kv) in kvs.iter().enumerate() {
             let (k, v) = kv.layers[layer].clone().expect("just written");
-            let cur = k.dim(2)?;
-            let pad = lmax - cur;
-            let (k, v) = if pad > 0 {
-                let zk = Tensor::zeros((1, model.n_kv_heads, pad, model.head_dim), k.dtype(), k.device())?;
-                let zv = Tensor::zeros((1, model.n_kv_heads, pad, model.head_dim), v.dtype(), v.device())?;
-                (Tensor::cat(&[&k, &zk], 2)?, Tensor::cat(&[&v, &zv], 2)?)
-            } else {
-                (k, v)
-            };
-            ks.push(k.reshape((model.n_kv_heads, lmax, model.head_dim))?);
-            vs.push(v.reshape((model.n_kv_heads, lmax, model.head_dim))?);
+            let q_row = q.narrow(0, row, 1)?;
+            rows.push(self.attn.attend(&q_row, k, v, None)?);
         }
-        let k_batch = Tensor::stack(&ks, 0)?;
-        let v_batch = Tensor::stack(&vs, 0)?;
-        let y = self.attn.attend(&q, k_batch, v_batch, Some(mask))?;
+        let y = Tensor::cat(&rows, 0)?;
         let x = (self.attn.combine(&y, b, seq)? + residual)?;
         let residual = &x;
         let x = (self.mlp.forward(&self.rms2.forward(&x)?)? + residual)?;

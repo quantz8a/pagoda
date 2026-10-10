@@ -190,7 +190,7 @@ prompt / 共享树干只 prefill 一次，任意多分支零重算接入。HTTP 
 9. **批量 matmul（P3）**：→ ✅ 已完成（2026-09-30 验证）：引擎解码阶段把「恰好缺一个 token」的会话聚成一批，一次 `[B,1]` 前向推进（`ModelEngine::session_forward_batch` + `ModelSession::as_any_mut` 下沉钩子；不支持的后端自动回退逐条，语义不变）。pagoda-hf 侧换用自研批量 Llama（`pagoda-hf/src/llama.rs`，约 400 行 candle-nn 原语，与 candle 官方 Llama **逐 bit 一致**：F32/F16 parity 均 0.0e0）——每会话私有 KV、补齐+遮罩拼批、按行 RoPE、原子提交（失败不留半状态，回退安全）。实测：物理调用 6.24× 收缩（256 步/41 次）；tiny 模型 batch-8 吞吐 2218 → 3103 tok/s（+40%）；1.1B 大模型墙钟暂持平（kernel 时间主导）。新指标：`total_decode_steps` / `total_decode_calls` / `decode_batch_factor`（/stats + CLI revenue 行）。测试：核心 `tests/batch_tests.rs` 3 项（调用数收敛、批量=逐条逐 token 相等、空投喂分支不挤占批次）+ e2e `e2e_batched_decode`（对拍/等价/收敛/热缓存复跑）。修复的坑：多 token 后缀喂入非空 cache 的因果遮罩必须按 `[seq, index_pos+seq]` 开窗（candle 逐 token 循环的限制随之解除）；`Tensor::stack` 会新增轴（需先挤掉每会话前导维）。CUDA Graph 已调研（2026-10-02）：candle-core 0.8.4 无 stream capture / 图回放 API，本路线内不可实现；解锁路径：上游 candle 支持 CUDA Graph，或以 cudarc 自研 paged-attention 融合 kernel（等效目标：把整步压成极少次 kernel 发射）。
 10. **张量级前缀嫁接（P3，真·RadixAttention）**：→ ✅ 已完成（2026-09-30 验证）：逻辑前缀缓存（radix/APC）之外，把完赛会话的 KV **张量本体**收进跨请求仓库 `KvVault`（`pagoda-hf/src/vault.rs`：键 = token 路径，prompt 前缀 + 已喂入完整路径双键，Arc 快照零拷贝，LRU 上限默认 128 条、`PAGODA_KV_VAULT_ENTRIES` 可调，故障请求不入库）；新请求 admit 时最长前缀匹配并 `narrow` 切片嫁接（`ModelEngine::graft_session` / `offer_session_kv` + `ModelSession::as_any`，上限 prompt_len−1 保证首步照常产出 logits、自动落入批量通路）。因果注意力保证前缀切片与重算逐 bit 相等。实测（tiny 模型）：重复请求 21 → 16 token 投喂，checkpoint 创建 6 → 1 token。测试：核心 `tests/graft_tests.rs` 4 项（嫁接覆盖数、嫁接 vs 不嫁接逐 token 相等、故障 KV 不入库、APC 正交）+ e2e 断言 `model_graft_tokens`；`pagoda-hf` vault 单测 2 项（最长前缀+上限、LRU 淘汰）。稀疏键取舍：只存 prompt 边界与完整路径两处键，任意深度命中留作规模化路线。→ 2026-10-02 已升级：radix 键控 trie（任意深度命中，插入/命中/淘汰 O(路径长)，同路径重复入库替换旧快照不泄漏预算）+ 双封顶（条数 PAGODA_KV_VAULT_ENTRIES 默认 128 + 字节 PAGODA_KV_VAULT_BYTES 默认 2GiB，按 SessionKv 张量实测字节 LRU 淘汰）；e2e 新增 [6/6] 子前缀命中断言（grafted=4，稀疏键时代为 0）；vault 单测 5 项（任意深度/LRU/字节预算/重复入库/淘汰剪枝保共享前缀）。
 
-11. **SGLang 共部署网关（P4）**：→ ✅ 已完成（2026-10-02）：`pagoda serve --upstream http://host:port` 进入代理模式——`/generate` 与 `/v1/chat/completions` 逐字节透传给上游 SGLang worker（零依赖阻塞式 HTTP/1.1 客户端 `http_client.rs`，整段缓冲，上游故障降级 502），控制面（`/health` `/stats` `/checkpoint*`）保持本地；`/stats` 增加 `upstream` 与 `proxied_requests` 可观测字段。一键脚本 `scripts/co-deploy.ps1` / `co-deploy.sh`（构建 → 可选 venv 装 SGLang → 起 worker 等健康 → 起网关等健康）。系统测试 `http_proxy_forwards_generation_and_keeps_control_plane`（mock 上游断言透传逐字节、控制面零转发、计数正确）。2026-10-03 续：SSE 流式透传 ✅——`http_client::request_open`/`UpstreamStream` 支持 chunked 分帧（缓冲路径透明解 chunked），请求体带 `"stream":true` 时代理逐 chunk 中继上游 SSE（`Proxy::forward_streaming`，Content-Type 透传 text/event-stream），上游非流式自动回退缓冲，流式期间不持引擎锁（控制面不被长连接阻塞）；`/stats` 增加 `streamed_requests`。系统测试 `http_proxy_streams_sse_verbatim_and_counts`（mock SSE 上游断言分帧原样、顺序、终止帧、缓冲路径解帧、计数）。待做：多上游前缀感知路由。
+11. **SGLang 共部署网关（P4）**：→ ✅ 已完成（2026-10-02）：`pagoda serve --upstream http://host:port` 进入代理模式——`/generate` 与 `/v1/chat/completions` 逐字节透传给上游 SGLang worker（零依赖阻塞式 HTTP/1.1 客户端 `http_client.rs`，整段缓冲，上游故障降级 502），控制面（`/health` `/stats` `/checkpoint*`）保持本地；`/stats` 增加 `upstream` 与 `proxied_requests` 可观测字段。一键脚本 `scripts/co-deploy.ps1` / `co-deploy.sh`（构建 → 可选 venv 装 SGLang → 起 worker 等健康 → 起网关等健康）。系统测试 `http_proxy_forwards_generation_and_keeps_control_plane`（mock 上游断言透传逐字节、控制面零转发、计数正确）。2026-10-03 续：SSE 流式透传 ✅——`http_client::request_open`/`UpstreamStream` 支持 chunked 分帧（缓冲路径透明解 chunked），请求体带 `"stream":true` 时代理逐 chunk 中继上游 SSE（`Proxy::forward_streaming`，Content-Type 透传 text/event-stream），上游非流式自动回退缓冲，流式期间不持引擎锁（控制面不被长连接阻塞）；`/stats` 增加 `streamed_requests`。系统测试 `http_proxy_streams_sse_verbatim_and_counts`（mock SSE 上游断言分帧原样、顺序、终止帧、缓冲路径解帧、计数）。2026-10-10 续：多上游前缀感知路由 ✅（P3 仓库内项清零）——`--upstream` 接受逗号分隔列表，`Proxy` 内嵌 `PrefixRouter`：按 prompt 最长前缀亲和选上游（同前缀会话粘住 KV 已热的 worker），`/stats` 增加 `upstream_pool` 与 `upstream_pool_routed`。顺带修掉路由器根节点候选偏置的真 bug：冷请求原先被全部吸到首个热 worker——现在 `deepest==0` 时退回全体轮询，且亲和挑选不再消耗轮询游标（冷路径独立 `rr_cold`）。系统测试 `http_proxy_prefix_pool_sticks_and_spreads`（三 mock 上游断言同前缀粘住、异前缀散开、计数正确）。
 
 12. **Laya 决策模型支持（P4，System 1）**：→ ✅ 已完成（2026-10-02 验证）：`pagoda-hf/src/laya.rs` 完整移植 Laya 推理管线（`rl_agent_api.py` + `rl_common.py` 的 candle 版）——ModernBERT 编码器（candle-transformers 现成，权重名 `encoder.*` → `model.*` 重映射加载）+ 决策头（2 层 norm_first transformer + type_emb + scorer + act_head 手搓，`nn.TransformerEncoderLayer` 语义逐行对齐：in_proj 分体、key_padding_mask、relu FFN）+ `build_sequence` 逐 token 级移植（[CLS] 题型+指令 [SEP] [MASK] 选项… [SEP] state [SEP]）+ 按题型分桶温度校准。三题型 choice/score/noul 的 Jev 兼容答案（choice 标签+分布、score 期望值、noul 概率、confidence=1−归一化熵、act_probability）。e2e `examples/e2e_laya.rs`：README 账单场景断言 department=billing（confidence 0.927）、churn_risk=0.879>0.5、概率和为 1、两次运行逐 bit 一致。架构意义：System 1 分诊台嵌入 pagoda 网关（路由/护栏/审核），与 System 2 生成（SGLang/本地）分层。2026-10-03 续：`src/bin/laya_server.rs` 独立 HTTP 服务（GET /health + POST /decide，Jev 兼容 JSON，坏请求 400），输出与官方 Python API 逐字段对拍一致（billing 0.9865 / conf 0.9267 / churn 0.879 / act 1.0 全同）；一键脚本 `pagoda-hf/scripts/serve-laya.{ps1,sh}`；同机基准 `docs/BENCHMARK-LAYA.md`（GPU 快 12.3%、冷启动 5–6.5×、内存 −37%、17.9MB 单二进制 vs 5.3GB venv、跨设备决策逐位一致；CPU 纯算力落后 oneDNN 2.25× 为诚实差距）。2026-10-03 续：网关按 Laya 判定路由 ✅（见第 13 项之后的分诊网关条目）。待做：multilingual 子目录检查点、批量决策。
 
@@ -209,9 +209,121 @@ prompt / 共享树干只 prefill 一次，任意多分支零重算接入。HTTP 
     `http_triage_gateway_routes_and_escalates`（mock Laya 按 state 判定 + mock 上游断言
     威胁拦截/安全透传/计数正确）。小白文档：guide/16。SSE 与分诊并存 ✅（分诊先行缓冲判定，放行后才进入流式中继；升级响应始终是缓冲 JSON）。2026-10-03 续：按部门路由 ✅——`pagoda serve --route dept=http://host:port`（可重复），Laya 判定的部门直接选择上游（`Proxy::with_routes`/`pick`），未配置部门的落到默认 `--upstream`；`/stats` 增加 `routed_requests` 与 `routes` 路由表；缓冲与 SSE 流式两条转发路径都按部门选路。系统测试 `http_triage_routes_by_department_to_dedicated_upstream`（双 mock 上游断言 billing 工单进专线上游、未匹配部门走默认、计数正确）。待做：批量分诊、路由维度扩展到置信度/负载。
 
+15. **Mooncake 风格 PD 分离（P6）**：→ ✅ 已完成（2026-10-09 三进程实跑验证）：`pagoda/src/pd.rs`
+    移植 Mooncake（Moonshot AI）的 P/D 解耦架构——prefill worker 算完 prompt KV 发布到
+    KV 对象池，decode worker 拉取后不重算直接解码。映射：`KvStore` trait = Mooncake Store
+    语义（内容哈希键 = prompt token 路径的 FNV-1a，幂等 PUT，字节预算内 LRU 淘汰，对齐
+    Mooncake memory pool）；`LocalStore` 同进程实现 + `HttpStore`/`pagoda store` 守护进程
+    （`PUT/GET/DELETE /kv/<key>` + `/store/stats`，零依赖 HTTP/1.1，生产环境在 trait 后面
+    换 RDMA 传输引擎）；`PrefillBundle` = 传输载荷（`prompt_tokens` 即逻辑 KV 镜像——
+    pagoda 参考实现的物理页内容就是 token 路径——外加 `ModelSession::export_kv` /
+    `ModelEngine::import_session` 张量 KV 钩子，玩具模型为 null，candle 后端可直接挂上）。
+    引擎两半：`prefill_only`（admit→分块物化→推 session→发布 bundle→释放本地页，计
+    `pd_prefill_requests`）与 `decode_from_kv`（拉 bundle→本地页 adopt→`drain` 复用连续批
+    解码环路，`total_prefill_tokens` 恒 0——prefill 算力全部留在对端）。HTTP 面：
+    `POST /prefill`（prefill worker）→ `{kv_key,...}`；`POST /generate {"kv_key":...}`
+    （decode worker，miss 404）；`--prefill-url` 让 decode worker 兼任 conductor——纯文本
+    `/generate` 自动转发 prefill 再本地解码（Mooncake conductor 角色）；角色纪律：
+    prefill 角色拒绝 `/generate`、decode 角色拒绝 `/prefill`、无 store 一律 400。
+    CLI：`pagoda store --port 9100` + `pagoda serve --role prefill|decode --store ...`。
+    测试：`pd.rs` 3 单测（bundle serde / 内容寻址键 / LRU 淘汰）+ `tests/pd_tests.rs`
+    3 项（分离 vs 统一输出逐 token 相等且 decode 侧零 prefill 计费、幂等重发 store_hit、
+    HTTP store 往返、三进程 conductor e2e 含角色纪律与 /stats 计数）。小白文档：guide/18。
+    2026-10-09 续：三条待做全部清零 ✅——
+    ① candle 张量 KV export/import：`SessionKv::export_bytes/import_bytes`（F32 上线，
+    F16/BF16 往返逐位一致；载荷含 last-position logits，decode 侧首 token 零重算），
+    `CandleCausalLM::cache_export/cache_import` 默认 None 保持其他后端兼容，
+    `CandleModel::import_session` 校验长度后重建会话；零权重 Llama 引擎级对拍
+    `candle_pd_split_matches_unified`（输出逐 token 相等，decode 侧 tokens_fed 只含
+    生成 token）+ `llama::tests::session_kv_bytes_roundtrip`（形状/dtype/logits/坏包）。
+    ② 多 decode worker 前缀亲和调度：`pd::PrefixRouter`（字符 trie + 每节点 worker 集合，
+    冷路径 round-robin；根节点不打标避免全局磁吸）+ `pagoda route --prefill-url ...
+    --decode-url ...`（可重复）——router 即 conductor：/generate 先转 prefill 再按亲和
+    选 worker 转发 kv_key，响应逐字节中继（SSE 逐 chunk），`/route/stats` 暴露每 worker
+    命中数。③ SSE 流式 PD：`drain` 调度环路加可选 per-token sink（`seq_id + 解码片段`），
+    `Engine::decode_from_kv_streaming` + 服务端 `/generate {"kv_key"/conductor, stream:true}`
+    逐 token 发 `data:` 帧、末帧带 finish_reason/usage、`[DONE] 收尾；头部延迟到首帧才写，
+    kv_miss 等前置错误仍返回普通 JSON。新增测试 4 项（sink 顺序与拼接等价、亲和单测、
+    SSE 线上 e2e、router e2e 含粘性命中）。
+    2026-10-09 再续：工程化三件套 ✅——
+    ④ store TTL：`pagoda store --max-age-secs N`（`StoreCore` 条目带插入时间戳，
+    get/put 时惰性过期，字节立即归还预算，`/store/stats` 新增 `expired` 计数）——
+    decode 侧宕机没人来取的 bundle 不再永久占用池容量（Mooncake 的 lease/TTL 语义）。
+    ⑤ router 分诊门：`pagoda route --laya-url ...`（同 serve 的 shadow/required/
+    churn-threshold/min-confidence 四参）——/generate 在**花任何 prefill 算力之前**先过
+    Laya System-1，escalate 直接回人工接管 JSON（测试用死掉的 prefill 证明：敌意请求
+    200 升级、干净请求 502 prefill_unreachable，门的位置无可辩驳）。
+    ⑥ 真权重 serving 二进制：`pagoda-hf/src/bin/serve.rs`（HF tokenizer + Candle Llama
+    接进 `run_full`，全套 --role/--store/--prefill-url 参数）——三进程真权重 PD 冒烟
+    输出与统一服务**逐字节相等**；实测小模型上 PD 暖路径 57ms vs 统一 29ms（~500KB
+    bundle 传输主导，符合 Mooncake 论断：prefill 算力远大于传输时分离才划算），
+    数字与复现步骤见 docs/BENCHMARK-PD.md。
+    2026-10-09 1.1B 交叉点实测（TinyLlama 真权重，长 prompt 扫频 + 并发隔离实验）：
+    ⑦ bundle 线格式 v2：kv 张量字节从 JSON 字节数组（~4x 膨胀、110MB 张量变 ~440MB
+    文本、解析数秒）改 base64 字符串（+33%），零依赖编解码器 + 单测——传输瓶颈就此
+    消失，1.1B 下单请求 PD 从 128 token 起全程不亏（64_codec_roundtrip）。
+    ⑧ conductor 锁范围修复：原实现把 prefill 轮询放在 decode 引擎锁内，排队请求的
+    prefill 无法与在途 decode 重叠（738-token prefill 白等 ~37s）；把 prefill 提升到
+    锁外（请求体 {text}->{kv_key} 重写后走正常带锁解码路径）后，钉核隔离下并发
+    请求 B 延迟 48.4s→38.2s（-21%）；回归测试
+    `conductor_prefill_does_not_block_decode_engine`。结论：交叉点不在 prompt
+    长度而在并发与资源隔离——prefill 算力跑在 decode 不共享的资源上时 PD 才赢，
+    单机 CPU 不分区则保持 unified。
+
+16. **请求级并发调度（P7）**：→ ✅ 已完成（2026-10-09 真权重实测）：引擎装进调度 actor
+    （`Engine::into_actor` + `pagoda/src/actor.rs` 通道协议：Generate（带事件回传通道）/
+    Stats/Shutdown），HTTP 处理线程只投递请求，一个长跑 continuous-batching 循环统一
+    调度——在途请求的分块 prefill 与 decode 在引擎内交错推进，取代原先「每请求一把
+    全局引擎锁」的全串行。`drain` 拆出单步 `drain_step`；actor 空闲阻塞 recv，等待
+    队列有上限（超限回 QueueFull）。统一角色用 `pagoda serve --concurrent`（PD 角色
+    保持 run_full——PD 的并发来自进程分离，不来自进程内重叠）；/stats 报
+    `mode: concurrent`；SSE 帧格式与 PD 流式路径一致。1.1B 同会话复测：串行 B 墙钟
+    82.8s → 并发 76.5s（仅 -8%：CPU 算力饱和时交错不产出新算力，makespan 反增 9%，
+    A 延迟 2.3x 换公平性），PD 钉核 67.5s 仍最优——进程内调度换不来资源隔离
+    （数字见 docs/BENCHMARK-PD.md）。测试 `tests/concurrent_tests.rs` 2 项：actor
+    并发 4 请求 == 串行逐 token 输出（流式片段拼接 == Done 全文）；HTTP e2e
+    3 并发 buffered + 1 SSE 全部对拍串行基线，/stats 并发下可应答。
+    2026-10-09 硬化续：① actor 循环改突发排空——每步把入队消息全部 drain 进来，
+    突发请求同步入批（原先一步一条，N 并发白等 N-1 个调度步）；② 补齐
+    EngineHandle::shutdown（原 Shutdown 消息变体无从发送，属死路径）；③
+    concurrent 服务器补齐 /v1/chat/completions（缓冲式，与 run_full 行为一致，
+    复用同一 build_chat_request/chat_response）；④ 补测三例：QueueFull 即拒
+    （max_waiting_requests=0 确定性触发）、shutdown 后通道收束无 Done、
+    chat e2e 对拍串行基线。
+
+17. **服务化硬化包（P7 续，2026-10-10）**：① 请求取消——引擎新增 `abort_seq`
+    （从等待队列摘除 + 归还 KV 块 + 按 fault 保守丢弃共享前缀），actor 循环在
+    Token 事件发送失败（客户端断连）时即触发中止，不再空烧算力；新指标
+    `aborted_requests`（EngineStats + base_stats_fields + CLI revenue 行）。
+    ② 分诊 × 并发模式打通——`run_concurrent(engine, addr, triage)` 接受可选
+    `Arc<Triage>`，CLI 放行 `--concurrent --laya-url`（原先两参数互斥），并发
+    服务器同样先过分诊门再入批。③ checkpoint 入 actor——`generate_from_checkpoint`
+    拆出 `admit_from_checkpoint`，ActorMsg 增加 CheckpointCreate / Drop / Generate
+    三消息（checkpoint 不存在经 admitted 通道回 404 语义），concurrent 服务器补齐
+    `/checkpoint` 三端点（原先仅 run_full 有）；`actor_stream` 改为接收
+    `Receiver<StreamEvent>` 由调用方持有。测试 +4（`tests/concurrent_tests.rs`
+    现 9 项）：断连中止计数、actor checkpoint 对拍直调引擎、HTTP checkpoint e2e、
+    concurrent 分诊门（mock Laya 威胁拦截/安全放行）。
+
+18. **性能三件套（P8，2026-10-10 真权重验证）**：① varlen 注意力——`batch_decode`
+    去掉「把每条会话 KV 补齐到批内最长 + 注意力遮罩」，改为逐会话按各自精确长度
+    attend（投影/FFN 仍批量）；`forward_batch` 删掉 mask/lmax 参数。1.1B 同会话
+    复测：并发模式 B 墙钟 60.7s→48.1s（对串行基线从 -8% 改善到 -21%，补齐浪费
+    约占三倍差距）；e2e `e2e_batched_decode` 批量==逐条对拍全过。② KV 线格式
+    F16——`KV_WIRE_VERSION_V2=2` 自描述载荷（头部携带 dtype 线编码），
+    `KV_WIRE_DTYPE: AtomicU32` + `set_kv_wire_f16`，手写 f32↔f16 位转换零依赖；
+    `pagoda serve --kv-dtype f16` 开启；v1 载荷向后兼容（旧版本字节点按 F32 解析）。
+    ③ savings 四轴指标——`/stats` 增加 `savings = {tokens, pages, forwards} ×
+    {radix, apc, checkpoint, graft}` 交叉表（EngineStats 补 `kv_block_size` 用于
+    页换算），CLI revenue 行加 `forwards_saved` / `aborted`。1.1B 同日同 binary
+    复测（solo A 27.0s / solo B 43.2s）：串行 B 60.7s；并发+varlen B 48.1s
+    （-21%）；PD 钉核 B 47.1s——PD 对 B 的延迟优势被并发+varlen 磨平，PD 剩余
+    价值在 A 的延迟（43.8s vs 59.4s：A 的 decode 独占核）。完整表格与解读见
+    docs/BENCHMARK-PD.md「2026-10-10 rerun」。
+
 ## 8. 验证（v2）
 
-- `cargo test --offline`：96 项全绿（42 库内单测 + 48 集成测试 + 6 系统测试），
+- `cargo test --offline`：120 项全绿（46 库内单测 + 67 集成测试 + 7 系统测试），
   零 rustc warning（仅预编译依赖的良性链接器提示）。
 - 系统测试（`tests/system_tests.rs`）：以真实 HTTP server（loopback 端口 + 手写 HTTP/1.1
   客户端）端到端覆盖 `/health`、`/generate`（普通 + grammar 约束）、`/v1/chat/completions`、

@@ -25,6 +25,7 @@
 | 15 | [一键蒸馏：付费大模型教出本地小模型](15-distill.md) | 教师造数→LoRA 蒸馏→逐字段考试→SGLang 部署；顺带说清什么时候根本不需要 SGLang |
 | 16 | [分诊网关](16-triage-gateway.md) | System 1 给 System 2 当门卫：Laya 门口分诊，危险工单 0 GPU 转人工，fail-open |
 | 17 | [Laya 专科化微调](17-laya-finetune-screening.md) | LoRA 1.8% 参数 + 温度重标定，27 分钟把通用决策模型训成领域筛选员；检查点即训即上线 |
+| 18 | [PD 分离：prefill/decode 分开部署](18-pd-disaggregation.md) | Mooncake 风格：KV 对象池当公文柜，prefill 读题 decode 写字，输出与统一版逐 token 相等 |
 
 ## 怎么用这份文档
 
@@ -43,7 +44,7 @@
 ```powershell
 cd pagoda
 powershell -ExecutionPolicy Bypass -File scripts\quickstart.ps1   # 一键：构建+测试+演示
-cargo test --offline                                        # 96 项测试全绿即环境 OK
+cargo test --offline                                        # 120 项测试全绿即环境 OK
 cargo run --offline --bin pagoda -- sample -p "你好" --repeat 2
 cargo run --offline --bin pagoda -- serve --port 8080       # HTTP 服务
 ```
