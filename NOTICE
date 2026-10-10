@@ -9,8 +9,13 @@ architecture is derived from and inspired by SGLang
 (https://github.com/sgl-project/sglang), which is also licensed under
 the Apache License, Version 2.0.
 
-No SGLang source code is copied into this repository. The design lineage
-and the mapping to upstream SGLang components are documented in
-pagoda/docs/DESIGN.md. This notice is kept as attribution and provenance
-documentation: pagoda and SGLang share the Apache-2.0 ecosystem, and we
-aim to keep that relationship transparent and cooperative.
+The serving runtime under `pagoda/` is an independent Rust implementation
+whose architecture is inspired by SGLang. Design lineage is documented in
+pagoda/docs/DESIGN.md.
+
+`rs-mm/` ports the still-image preprocessing algorithms from SGLang's
+`rust/sglang-mm` (Qwen2-VL smart_resize, patchify, token layout, and the
+PIL/ATen resize kernels), also Apache-2.0. PyO3 bindings, serde specs, and
+the rayon pool are not included. This notice is kept as attribution and
+provenance documentation: pagoda and SGLang share the Apache-2.0 ecosystem,
+and we aim to keep that relationship transparent and cooperative.

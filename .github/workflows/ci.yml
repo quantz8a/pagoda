@@ -17,6 +17,16 @@ jobs:
       - name: zero warnings
         run: RUSTFLAGS="-D warnings" cargo check --offline --manifest-path pagoda/Cargo.toml --all-targets
 
+  rs-mm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: test (offline)
+        run: cargo test --offline --manifest-path rs-mm/Cargo.toml
+      - name: zero warnings
+        run: RUSTFLAGS="-D warnings" cargo check --offline --manifest-path rs-mm/Cargo.toml --all-targets
+
   pagoda-hf:
     runs-on: ubuntu-latest
     steps:

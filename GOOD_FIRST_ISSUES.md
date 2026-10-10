@@ -5,16 +5,12 @@
 
 ## A. Rust 多模态（MM）处理器移植线 ⭐
 
-> 背景：参考 `remote-src/` 三份文件（`pipeline.rs` / `token_layout.rs` /
-> `internvl_mod.rs`），镜像出 `rs-mm/` 这条零依赖的 MM 线。InternVL 叶子已闭环
-> （`src/model/internvl.rs`），下面每个都是同一套 `MmFamilyProcessor` 的同类叶子。
-> 模板照抄 InternVL，复用 `common::resize` / `common::decode` / `common::token_layout`。
+> 背景：`rs-mm/` 已并入本仓库。Qwen2-VL 叶子已闭环（`src/model/qwen2_vl.rs`），
+> 接口在 `pipeline.rs` 的 `MmFamilyProcessor`。后续叶子照抄 Qwen2-VL，复用
+> `common::resize` / `common::token_layout`。算法血缘见根目录 `NOTICE`
+> （SGLang `rust/sglang-mm`，Apache-2.0）。
 
-- **[L1] 移植 Qwen2-VL 图像处理器** `model/qwen2_vl.rs`
-  - 从哪下手：参考 `python/sglang/srt/multimodal/processors/qwen_vl.py`，按
-    `internvl.rs` 的 `process_item`/`layout` 实现；分 patch 用 `Geometry::Grid([t,h,w])`。
-  - 自测：`rs-mm` 下 `cargo test --offline`，加一个 `grid_split_matches_reference` 单测。
-  - 驱动轴：TTFT（图像 token 布局）、Token/Watt（分 patch 密度）。
+- ~~**[L1] 移植 Qwen2-VL 图像处理器** `model/qwen2_vl.rs`~~ → 已合入，见 `rs-mm/`
 
 - **[L1] 移植 MiniCPM-V 图像处理器** `model/minicpmv.rs`
   - 从哪下手：参考 `minicpmv.py` 的 slice 切分；`layout` 用 `TokenPattern::Explicit` 拼
@@ -81,5 +77,5 @@
 自测：cargo test --offline 里 <测试名>
 ```
 
-> 维护者注意：MM 线（`rs-mm`）目前位于工作区 `sglang-dive/rs-mm`，随仓库一起发布
-> 前需把它并入 `pagoda` 或独立成 crate，并把 `remote-src` 一并纳入。
+> 维护者注意：MM 线已在仓库根目录 `rs-mm/`。后续叶子（MiniCPM-V / LLaVA / decode）
+> 直接在该 crate 里加文件即可；CI 的 `rs-mm` job 会跑 `cargo test --offline`。

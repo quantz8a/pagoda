@@ -17,6 +17,7 @@ weights. Docs are primarily in Chinese.*
 | --- | --- |
 | [`pagoda/`](pagoda/) | 主 crate：**零依赖、离线可编译可测试**（78 项测试）。引擎、双前缀缓存（Radix/APC）、分页 KV、调度、约束解码、HTTP 服务、DSL |
 | [`pagoda-hf/`](pagoda-hf/) | 姊妹 crate（需联网）：HF tokenizer + Candle 真实权重、增量 KV 会话、checkpoint KV 分叉、基准与端到端验证脚本 |
+| [`rs-mm/`](rs-mm/) | 多模态预处理 crate（零依赖）：Qwen2-VL 图像 `smart_resize` / patchify / token layout，离线可测 |
 
 ## 五分钟上手
 
