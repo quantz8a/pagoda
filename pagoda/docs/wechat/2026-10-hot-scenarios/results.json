@@ -1,0 +1,10 @@
+{
+  "gpu_p50_ms": 605.5,
+  "gpu_mean_ms": 613.8,
+  "py_gpu_ms": 690.9,
+  "cpu_ms": 1100,
+  "multilingual_ms": 250,
+  "gpu_maxmin_ms": 10.3,
+  "mem_pagoda_mb": 1850,
+  "mem_python_mb": 2954
+}
