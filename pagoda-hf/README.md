@@ -7,6 +7,25 @@ the toy n-gram + byte stand-ins with real artifacts:
 - `HfTokenizer` — wraps `tokenizers::Tokenizer` (`tokenizer.json`).
 - `CandleModel<M>` — a `ModelEngine` adapter with a Candle Llama-family model
   loading real `config.json` + safetensors weights.
+- **Qwen3.5 / Qwen3.8 (WIP Candle)** — `qwen3_5` module: config + GDN kernels.
+- **`MlxHttpEngine` (Phase 1)** — pagoda `ModelEngine` / `ModelSession` over
+  `mlx-serve` (via gpu gate). GPU runs Qwen3.8; Engine owns DSL / checkpoint.
+  Each step requests `max_tokens=1` and builds **sparse** logits (peak + finite
+  floor; Engine rejects Inf/NaN). Fork clones the token transcript; no tensor
+  KV graft yet. Live GPU smoke needs a free mlx gate slot (queue backlog can
+  time out).
+
+```bash
+# Qwen3.8 on Metal through the gate, pagoda Engine in front:
+cargo run --release --bin serve -- --backend mlx \
+  --upstream http://127.0.0.1:11236 \
+  --tokenizer ~/.mlx-serve/models/mlx-community/Qwen3.8-27B-8bit/tokenizer.json \
+  --port 8000
+
+# /stats includes mlx extras: upstream_prompt_tokens, upstream_cached_tokens,
+# upstream_cache_hit_ratio, mlx_remote_steps (Phase 1 sparse-logits adapter).
+# Phase 2: --backend candle-qwen38 with in-process Metal GDN (same traits).
+```
 - `Laya` — the Laya System-1 decision model (ModernBERT encoder + decision
   head): typed answers (choice / score / noul) with calibrated probabilities
   in one non-autoregressive forward pass. See `examples/e2e_laya.rs`.

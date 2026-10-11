@@ -55,6 +55,12 @@ pub use candle_transformers::models::llama::LlamaConfig;
 
 pub mod llama;
 pub use llama::{OwnedLlama, SessionKv};
+pub mod qwen3_5;
+pub use qwen3_5::{
+    recurrent_gated_delta_rule, GatedDeltaState, LayerType, Qwen3_5Config, Qwen3_5TextConfig,
+};
+pub mod mlx_engine;
+pub use mlx_engine::{MlxApi, MlxHttpEngine, MlxHttpSession, MlxTokenCodec, MlxUsageHandles};
 pub mod vault;
 pub use vault::KvVault;
 pub mod laya;
@@ -69,6 +75,7 @@ use pagoda::tokenizer::Tokenizer as SglTokenizer;
 
 /// A real HuggingFace tokenizer (`tokenizer.json`) implementing
 /// [`pagoda::Tokenizer`].
+#[derive(Clone)]
 pub struct HfTokenizer {
     inner: tokenizers::Tokenizer,
     eos: u32,
