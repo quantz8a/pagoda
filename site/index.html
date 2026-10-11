@@ -27,11 +27,13 @@
       <a class="nav-link" data-route="arch" href="#arch">架构</a>
       <a class="nav-link" data-route="graph" href="#graph">关系</a>
       <a class="nav-link" data-route="docs" href="#docs">文档</a>
+      <a class="nav-link" href="perf-report.html">优化</a>
     </nav>
     <div class="nav-actions">
       <button class="search-btn" id="search-btn">
         <span aria-hidden="true">⌕</span><span class="t">检索</span><span class="kbd">/</span>
       </button>
+      <a class="gh-link" href="roadmap.html">路线图</a>
       <a class="gh-link" href="https://github.com/quantz8a/pagoda" target="_blank" rel="noreferrer">GitHub ↗</a>
     </div>
   </div>
@@ -137,6 +139,13 @@
             <h3>代码地图，一目了然</h3>
             <p>每个模块都能对上号：scheduler → engine.rs，radix → radix_cache.rs，paged KV → kv_cache.rs。</p>
             <div class="value">看模块映射表 <b>→</b></div>
+          </a>
+          <a class="tile reveal" href="perf-report.html">
+            <div class="ico" style="color:var(--gold)">⚡</div>
+            <div class="t-k">performance</div>
+            <h3>优化报告</h3>
+            <p>Sticky 5.9× · GDN 0.21 ms/层 · mlx logits 复用 · PR #15/#16</p>
+            <div class="value">打开报告 <b>→</b></div>
           </a>
           <a class="tile reveal" href="#docs">
             <div class="ico" style="color:var(--gold)">03</div>
@@ -710,7 +719,7 @@ I want a refund, and I need to cancel my account today.</code></pre>
       <img class="brand-mark" src="assets/mark.svg" alt="Pagoda">
       <span class="brand-name" style="font-size:16px">PAGODA</span>
     </a>
-    <p class="footer-note">Apache-2.0。radix 前缀缓存和连续批调度这些思路来自 <a href="https://github.com/sgl-project/sglang" target="_blank" rel="noreferrer">SGLang</a>，署名在 NOTICE。代码、测试、文档都在同一个 repo。</p>
+    <p class="footer-note">Apache-2.0。radix 前缀缓存和连续批调度这些思路来自 <a href="https://github.com/sgl-project/sglang" target="_blank" rel="noreferrer">SGLang</a>，署名在 NOTICE。代码、测试、文档都在同一个 repo。· <a href="perf-report.html">性能优化报告</a> · <a href="roadmap.html">路线图</a></p>
   </div>
 </footer>
 

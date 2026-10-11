@@ -166,6 +166,19 @@ window.DOC_INDEX = [
     body:"看显存有没有被用好，顺手指导要不要扩容、何时触 LRU。",
     keywords:["kv_utilization","指标","显存","利用率","metrics"] },
 
+  { id:"perf-report-2026-10", bucket:"metrics", title:"性能优化报告 · 2026-10", en:"Perf report Oct 2026", minutes:"6 min",
+    blurb:"Sticky 路由 5.9×、GDN 0.21 ms/层、mlx-http logits 复用 — 可复现微基准。",
+    body:"2026-10 热路径：PrefixRouter exact-prompt sticky（跳过字符 trie rematch）、Qwen3.5 fused gated-delta + in-place causal conv、MlxHttpEngine 稀疏 logits 缓冲复用。数字见 site/perf-report.html。PR #15 #16，后续 #17 #18 #19。",
+    points:[
+      "Sticky vs 2.3KB trie walk：5.9×（release · n=50k · Apple Silicon）",
+      "GDN 单层 hv=48 dk=dv=128：0.211 ms/step · ~4736 steps/s",
+      "mlx-http：~248k vocab 每步 fill 复用，避免 1MiB 堆分配",
+      "独立页：perf-report.html（GitHub Pages）",
+    ],
+    cmd:"open https://quantz8a.github.io/pagoda/perf-report.html  # 或本地 site/perf-report.html",
+    note:"合入 main 后由 pages.yml 自动部署；本地可直接打开 site/perf-report.html。",
+    keywords:["性能","优化","benchmark","sticky","GDN","mlx","qwen3.8","TTFT","报告","pages"] },
+
   { id:"bench-laya", bucket:"metrics", title:"实测对比：pagoda-rust vs Laya Python", en:"Benchmark, same machine", minutes:"4 min",
     blurb:"同机同模型同输入：GPU 延迟快 12.3%，冷启动快 5–6.5 倍，内存低 37%；CPU 慢 2.25 倍也直说。",
     body:"pagoda-rust 对比 Laya 官方 Python 参考实现（逐字未改），进程内计时，5 次预热 + 50 次迭代。测于 2026-10-03，i5-12500 / RTX 3050 8GB 共享开发机，指示性对比。完整方法学见 pagoda/docs/BENCHMARK-LAYA.md。",
