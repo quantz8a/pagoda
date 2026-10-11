@@ -260,7 +260,9 @@ fn mock_upstream(port: u16, received: Arc<Mutex<Vec<String>>>) {
                         }
                     }
                 }
-                let resp = r#"{"text":"upstream says hi","finish_reason":"length","meta":{"upstream":true}}"#;
+                // Include mlx / OpenAI-style usage so the proxy can scrape
+                // prompt_tokens_details.cached_tokens into /stats.
+                let resp = r#"{"text":"upstream says hi","finish_reason":"length","meta":{"upstream":true},"usage":{"prompt_tokens":100,"completion_tokens":4,"total_tokens":104,"prompt_tokens_details":{"cached_tokens":40}}}"#;
                 let head = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     resp.len()
@@ -336,7 +338,7 @@ fn http_proxy_forwards_generation_and_keeps_control_plane() {
     assert!(body.contains("\"status\":\"ok\""));
     assert_eq!(received.lock().unwrap().len(), 2, "health must stay local");
 
-    // 4. /stats is local and exposes the upstream + proxied count.
+    // 4. /stats is local and exposes the upstream + proxied count + KV cache.
     let (status, body) = http(port, "GET", "/stats", None);
     assert_eq!(status, 200);
     let v = pagoda::json::parse(&body).expect("stats json");
@@ -349,6 +351,21 @@ fn http_proxy_forwards_generation_and_keeps_control_plane() {
         v.get("upstream")
             .and_then(|t| t.as_str())
             .is_some_and(|u| u.contains(&upstream_port.to_string())),
+        "stats body: {body}"
+    );
+    assert_eq!(
+        v.get("upstream_prompt_tokens").and_then(|t| t.as_f64()),
+        Some(200.0),
+        "two × 100 prompt tokens: {body}"
+    );
+    assert_eq!(
+        v.get("upstream_cached_tokens").and_then(|t| t.as_f64()),
+        Some(80.0),
+        "two × 40 cached tokens: {body}"
+    );
+    assert_eq!(
+        v.get("upstream_cache_hit_ratio").and_then(|t| t.as_f64()),
+        Some(0.4),
         "stats body: {body}"
     );
 
@@ -809,4 +826,13 @@ fn http_proxy_prefix_pool_sticks_and_spreads() {
     };
     let total: f64 = routed.iter().filter_map(|n| n.as_f64()).sum();
     assert_eq!(total, 3.0, "{stats}");
+    // Repeated alpha hit exact-hash sticky on the second send.
+    assert!(
+        v.get("sticky_hits").and_then(|t| t.as_f64()).unwrap_or(0.0) >= 1.0,
+        "sticky_hits missing/zero: {stats}"
+    );
+    assert!(
+        v.get("sticky_keys").and_then(|t| t.as_f64()).unwrap_or(0.0) >= 2.0,
+        "sticky_keys for alpha+beta: {stats}"
+    );
 }

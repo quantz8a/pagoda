@@ -569,19 +569,28 @@ fn store_handle(core: &Mutex<StoreCore>, method: &str, path: &str, body: &str) -
 
 /// Prefix-affinity router across several decode workers (Mooncake's
 /// conductor role): each prompt goes to the decode worker that has served the
-/// longest matching prompt prefix before, so the worker's local radix cache
-/// pays off. Affinity is tracked in a character trie over prompt text with a
-/// per-node worker set; ties and cold paths break round-robin.
+/// longest matching prompt prefix before, so the worker's local radix / KV
+/// cache pays off.
+///
+/// Affinity layers (first hit wins):
+/// 1. exact prompt hash sticky map (identical prompts → same worker);
+/// 2. character-trie longest prefix with a prior worker;
+/// 3. cold path: round-robin across the pool (spread new trunks).
 pub struct PrefixRouter {
     addrs: Vec<String>,
     urls: Vec<String>,
     trie: Vec<TrieNode>,
+    /// Exact-prompt sticky: FNV-1a(prompt) → worker index.
+    sticky: HashMap<u64, usize>,
     /// Round-robin cursor among prefix-affined candidates.
     rr: usize,
-    /// Round-robin cursor for cold prompts (no prefix evidence), kept
-    /// separate so affinity picks never disturb the spreading sequence.
+    /// Round-robin cursor for cold prompts (no prefix evidence).
     rr_cold: usize,
     routed: Vec<u64>,
+    /// Exact-hash sticky hits (same prompt saw the mapped worker again).
+    sticky_hits: u64,
+    /// Longest-prefix (not exact-hash) affinity hits.
+    prefix_hits: u64,
 }
 
 struct TrieNode {
@@ -613,10 +622,28 @@ impl PrefixRouter {
             addrs,
             urls: decode_urls.to_vec(),
             trie: vec![TrieNode::new(n)],
+            sticky: HashMap::new(),
             rr: 0,
             rr_cold: 0,
             routed: vec![0; n],
+            sticky_hits: 0,
+            prefix_hits: 0,
         })
+    }
+
+    /// Exact-prompt sticky hits so far.
+    pub fn sticky_hits(&self) -> u64 {
+        self.sticky_hits
+    }
+
+    /// Longest-prefix affinity hits (excluding exact sticky).
+    pub fn prefix_hits(&self) -> u64 {
+        self.prefix_hits
+    }
+
+    /// Number of distinct sticky keys remembered.
+    pub fn sticky_keys(&self) -> usize {
+        self.sticky.len()
     }
 
     /// Worker dial address (`host:port`) by index.
@@ -634,9 +661,13 @@ impl PrefixRouter {
         &self.routed
     }
 
-    /// Decode worker addr for `prompt`: longest-prefix affinity first,
-    /// round-robin among candidates and on cold paths.
+    /// Decode worker for `prompt`: exact-hash sticky → longest-prefix → RR.
     pub fn pick(&mut self, prompt: &str) -> usize {
+        let h = prompt_sticky_hash(prompt);
+        if let Some(&idx) = self.sticky.get(&h) {
+            self.sticky_hits += 1;
+            return idx;
+        }
         let mut node = 0usize;
         let mut deepest = 0usize;
         for ch in prompt.chars() {
@@ -664,21 +695,35 @@ impl PrefixRouter {
                 .collect()
         };
         let n = self.addrs.len();
-        let idx = match candidates.len() {
+        match candidates.len() {
             0 => {
+                // New trunk: spread. Identical rematches hit `sticky` above.
+                let idx = self.rr_cold;
                 self.rr_cold = (self.rr_cold + 1) % n;
-                self.rr_cold
+                idx
             }
             k => {
+                self.prefix_hits += 1;
+                let idx = self.rr % k;
                 self.rr = (self.rr + 1) % k;
-                candidates[self.rr]
+                candidates[idx]
             }
-        };
-        idx
+        }
     }
 
-    /// Remember that `worker` served `prompt` (called after a 200).
+    /// Remember that `worker` served `prompt`.
+    ///
+    /// Exact sticky rematches (same hash → same worker) only bump `routed`
+    /// and skip the character-trie walk — that walk dominates proxy latency
+    /// for long shared system prompts when the sticky map already knows
+    /// the affinity.
     pub fn record(&mut self, prompt: &str, worker: usize) {
+        let h = prompt_sticky_hash(prompt);
+        if self.sticky.get(&h) == Some(&worker) {
+            self.routed[worker] += 1;
+            return;
+        }
+        self.sticky.insert(h, worker);
         let mut node = 0usize;
         for ch in prompt.chars() {
             let next = match self.trie[node].children.get(&ch) {
@@ -714,9 +759,31 @@ impl PrefixRouter {
                 "affinity_nodes".to_string(),
                 Value::Number(self.trie.len() as f64),
             ),
+            (
+                "sticky_keys".to_string(),
+                Value::Number(self.sticky.len() as f64),
+            ),
+            (
+                "sticky_hits".to_string(),
+                Value::Number(self.sticky_hits as f64),
+            ),
+            (
+                "prefix_hits".to_string(),
+                Value::Number(self.prefix_hits as f64),
+            ),
         ])
         .to_json()
     }
+}
+
+/// FNV-1a over UTF-8 bytes — sticky key for identical prompts.
+pub fn prompt_sticky_hash(prompt: &str) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in prompt.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 /// Run the PD conductor router: plain-text `/generate` is prefilled at

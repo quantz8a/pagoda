@@ -40,10 +40,14 @@ pub struct Proxy {
     streamed: AtomicU64,
     /// Of those, requests sent to a department-specific route (not default).
     routed: AtomicU64,
+    /// Upstream `usage.prompt_tokens` summed across successful forwards.
+    upstream_prompt_tokens: AtomicU64,
+    /// Upstream `usage.prompt_tokens_details.cached_tokens` (mlx / OpenAI).
+    upstream_cached_tokens: AtomicU64,
     /// Department-specific upstreams from --route dept=url (Laya routes).
     routes: Vec<Route>,
-    /// Prefix-affine pool over multiple default upstreams (comma-separated
-    /// --upstream). None for a single default.
+    /// Prefix-affine + prompt-hash sticky pool over multiple default
+    /// upstreams (comma-separated --upstream). None for a single default.
     prefix_pool: Option<Mutex<crate::pd::PrefixRouter>>,
 }
 
@@ -79,6 +83,8 @@ impl Proxy {
             proxied: AtomicU64::new(0),
             streamed: AtomicU64::new(0),
             routed: AtomicU64::new(0),
+            upstream_prompt_tokens: AtomicU64::new(0),
+            upstream_cached_tokens: AtomicU64::new(0),
             routes: Vec::new(),
             prefix_pool,
         })
@@ -123,6 +129,23 @@ impl Proxy {
         self.routed.load(Ordering::Relaxed)
     }
 
+    pub fn upstream_prompt_tokens(&self) -> u64 {
+        self.upstream_prompt_tokens.load(Ordering::Relaxed)
+    }
+
+    pub fn upstream_cached_tokens(&self) -> u64 {
+        self.upstream_cached_tokens.load(Ordering::Relaxed)
+    }
+
+    /// `cached / prompt` over observed upstream usage (0 when no prompts yet).
+    pub fn upstream_cache_hit_ratio(&self) -> f64 {
+        let prompt = self.upstream_prompt_tokens();
+        if prompt == 0 {
+            return 0.0;
+        }
+        self.upstream_cached_tokens() as f64 / prompt as f64
+    }
+
     /// Pool member URLs when built from a comma-separated list (empty for a
     /// single default upstream).
     pub fn pool_urls(&self) -> Vec<String> {
@@ -140,10 +163,46 @@ impl Proxy {
             .unwrap_or_default()
     }
 
+    pub fn sticky_hits(&self) -> u64 {
+        self.prefix_pool
+            .as_ref()
+            .map(|p| p.lock().expect("prefix router poisoned").sticky_hits())
+            .unwrap_or(0)
+    }
+
+    pub fn prefix_hits(&self) -> u64 {
+        self.prefix_pool
+            .as_ref()
+            .map(|p| p.lock().expect("prefix router poisoned").prefix_hits())
+            .unwrap_or(0)
+    }
+
+    pub fn sticky_keys(&self) -> usize {
+        self.prefix_pool
+            .as_ref()
+            .map(|p| p.lock().expect("prefix router poisoned").sticky_keys())
+            .unwrap_or(0)
+    }
+
+    /// Scrape mlx / OpenAI-style `usage` from a buffered JSON body or SSE
+    /// transcript and add it to the running counters.
+    pub fn observe_upstream_usage(&self, body: &str) {
+        if let Some((prompt, cached)) = scrape_upstream_usage(body) {
+            if prompt > 0 {
+                self.upstream_prompt_tokens
+                    .fetch_add(prompt, Ordering::Relaxed);
+            }
+            if cached > 0 {
+                self.upstream_cached_tokens
+                    .fetch_add(cached, Ordering::Relaxed);
+            }
+        }
+    }
+
     /// Pick the upstream address: a department-specific route wins; then the
-    /// prefix-affine pool (recording the assignment so same-prefix prompts
-    /// stick); otherwise the default upstream. bool = matched a department
-    /// route.
+    /// prefix-affine / hash-sticky pool (recording the assignment so same
+    /// prompts stick); otherwise the default upstream. bool = matched a
+    /// department route.
     fn pick(&self, dept: Option<&str>, prompt: Option<&str>) -> (String, bool) {
         if let Some(d) = dept {
             for route in &self.routes {
@@ -173,7 +232,7 @@ impl Proxy {
         body: &str,
         dept: Option<&str>,
     ) -> std::io::Result<()> {
-        let prompt = extract_user_text(path, body);
+        let prompt = extract_affinity_text(path, body);
         let (addr, matched) = self.pick(dept, prompt.as_deref());
         if matched {
             self.routed.fetch_add(1, Ordering::Relaxed);
@@ -206,9 +265,13 @@ impl Proxy {
             while let Some(payload) = up.next_payload()? {
                 buf.extend_from_slice(&payload);
             }
+            let resp_body = String::from_utf8_lossy(&buf).into_owned();
+            if (200..300).contains(&up.status) {
+                self.observe_upstream_usage(&resp_body);
+            }
             let resp = HttpResponse {
                 status: up.status,
-                body: String::from_utf8_lossy(&buf).into_owned(),
+                body: resp_body,
             };
             return write_http_response(client, &resp);
         }
@@ -221,10 +284,15 @@ impl Proxy {
             content_type
         );
         client.write_all(head.as_bytes())?;
+        let mut transcript = Vec::new();
         while let Some(payload) = up.next_payload()? {
+            transcript.extend_from_slice(&payload);
             client.write_all(format!("{:x}\r\n", payload.len()).as_bytes())?;
             client.write_all(&payload)?;
             client.write_all(b"\r\n")?;
+        }
+        if (200..300).contains(&up.status) {
+            self.observe_upstream_usage(&String::from_utf8_lossy(&transcript));
         }
         client.write_all(b"0\r\n\r\n")
     }
@@ -232,7 +300,7 @@ impl Proxy {
     /// Forward one JSON request verbatim; passthrough (status, body).
     /// Upstream failures degrade to a 502 instead of poisoning the server.
     fn forward(&self, method: &str, path: &str, body: Option<&str>, dept: Option<&str>) -> HttpResponse {
-        let prompt = body.and_then(|b| extract_user_text(path, b));
+        let prompt = body.and_then(|b| extract_affinity_text(path, b));
         let (addr, matched) = self.pick(dept, prompt.as_deref());
         if matched {
             self.routed.fetch_add(1, Ordering::Relaxed);
@@ -240,6 +308,9 @@ impl Proxy {
         match http_client::request(&addr, method, path, body, http_client::DEFAULT_TIMEOUT) {
             Ok((status, body)) => {
                 self.proxied.fetch_add(1, Ordering::Relaxed);
+                if (200..300).contains(&status) {
+                    self.observe_upstream_usage(&body);
+                }
                 HttpResponse { status, body }
             }
             Err(e) => HttpResponse::json(
@@ -276,6 +347,12 @@ impl HttpResponse {
 pub trait ServingEngine {
     fn generate(&mut self, req: &WriteRequest) -> GenerationOutput;
     fn stats(&self) -> EngineStats;
+
+    /// Extra JSON fields merged into `GET /stats` (e.g. remote mlx usage).
+    /// Default: none.
+    fn extra_stats(&self) -> Vec<(String, Value)> {
+        Vec::new()
+    }
 
     /// Create a pinned KV checkpoint from `text`. Default: unsupported.
     fn create_checkpoint(&mut self, _text: &str) -> Option<u64> {
@@ -490,6 +567,72 @@ fn extract_user_text(path: &str, body: &str) -> Option<String> {
     None
 }
 
+/// Affinity key for sticky / prefix routing: `/generate` uses `text`; chat
+/// joins every message content in order so a shared system prompt sticks the
+/// whole trunk to one upstream (KV prefix cache affinity).
+fn extract_affinity_text(path: &str, body: &str) -> Option<String> {
+    let v = crate::json::parse(body).ok()?;
+    if path == "/generate" {
+        return v
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+    if let Some(Value::Array(items)) = v.get("messages") {
+        let mut parts = Vec::new();
+        for m in items {
+            match m.get("content") {
+                Some(Value::String(s)) if !s.is_empty() => parts.push(s.as_str()),
+                _ => {}
+            }
+        }
+        if !parts.is_empty() {
+            return Some(parts.join("\n"));
+        }
+    }
+    None
+}
+
+/// `(prompt_tokens, cached_tokens)` from a buffered completion JSON or an SSE
+/// transcript that embeds the same shape in `data:` frames.
+fn scrape_upstream_usage(body: &str) -> Option<(u64, u64)> {
+    if let Some(pair) = usage_from_json_value(&crate::json::parse(body).ok()?) {
+        return Some(pair);
+    }
+    // SSE / concatenated frames: walk data lines, keep the last usage seen.
+    let mut last = None;
+    for line in body.lines() {
+        let data = line.strip_prefix("data:").map(str::trim).unwrap_or(line);
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        if let Ok(v) = crate::json::parse(data) {
+            if let Some(pair) = usage_from_json_value(&v) {
+                last = Some(pair);
+            }
+        }
+    }
+    last
+}
+
+fn usage_from_json_value(v: &Value) -> Option<(u64, u64)> {
+    let usage = v.get("usage")?;
+    let prompt = usage
+        .get("prompt_tokens")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0) as u64;
+    let cached = usage
+        .get("prompt_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .or_else(|| usage.get("cached_tokens"))
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0) as u64;
+    if prompt == 0 && cached == 0 {
+        return None;
+    }
+    Some((prompt, cached))
+}
+
 /// [`handle_with_proxy`] plus an optional Laya [`Triage`] gate: generation
 /// endpoints are judged by the System-1 decision model first; escalated
 /// requests get a human-handoff reply without touching the upstream worker.
@@ -658,6 +801,7 @@ pub fn handle_with_pd<E: ServingEngine>(
         ("GET", "/stats") => {
             let s = engine.stats();
             let mut fields = base_stats_fields(&s);
+            fields.extend(engine.extra_stats());
             if let Some(proxy) = proxy {
                 fields.push((
                     "upstream".to_string(),
@@ -675,6 +819,18 @@ pub fn handle_with_pd<E: ServingEngine>(
                     "routed_requests".to_string(),
                     Value::Number(proxy.routed_requests() as f64),
                 ));
+                fields.push((
+                    "upstream_prompt_tokens".to_string(),
+                    Value::Number(proxy.upstream_prompt_tokens() as f64),
+                ));
+                fields.push((
+                    "upstream_cached_tokens".to_string(),
+                    Value::Number(proxy.upstream_cached_tokens() as f64),
+                ));
+                fields.push((
+                    "upstream_cache_hit_ratio".to_string(),
+                    Value::Number(proxy.upstream_cache_hit_ratio()),
+                ));
                 let pool_urls = proxy.pool_urls();
                 if !pool_urls.is_empty() {
                     fields.push((
@@ -690,6 +846,18 @@ pub fn handle_with_pd<E: ServingEngine>(
                                 .map(|n| Value::Number(n as f64))
                                 .collect(),
                         ),
+                    ));
+                    fields.push((
+                        "sticky_hits".to_string(),
+                        Value::Number(proxy.sticky_hits() as f64),
+                    ));
+                    fields.push((
+                        "prefix_hits".to_string(),
+                        Value::Number(proxy.prefix_hits() as f64),
+                    ));
+                    fields.push((
+                        "sticky_keys".to_string(),
+                        Value::Number(proxy.sticky_keys() as f64),
                     ));
                 }
                 let routes: Vec<Value> = proxy
@@ -1497,6 +1665,7 @@ fn handle_conn_concurrent(
             let s = handle.stats();
             let mut fields = base_stats_fields(&s);
             fields.push(("mode".to_string(), Value::String("concurrent".to_string())));
+            // Concurrent actor path has no ServingEngine hook for extras yet.
             let body = Value::Object(fields).to_json();
             write_http_response(stream, &HttpResponse::json(200, &body))
         }
