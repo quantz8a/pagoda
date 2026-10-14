@@ -184,6 +184,13 @@ impl Proxy {
             .unwrap_or(0)
     }
 
+    pub fn sticky_evictions(&self) -> u64 {
+        self.prefix_pool
+            .as_ref()
+            .map(|p| p.lock().expect("prefix router poisoned").sticky_evictions())
+            .unwrap_or(0)
+    }
+
     /// Scrape mlx / OpenAI-style `usage` from a buffered JSON body or SSE
     /// transcript and add it to the running counters.
     pub fn observe_upstream_usage(&self, body: &str) {
@@ -203,7 +210,7 @@ impl Proxy {
     /// prefix-affine / hash-sticky pool (recording the assignment so same
     /// prompts stick); otherwise the default upstream. bool = matched a
     /// department route.
-    fn pick(&self, dept: Option<&str>, prompt: Option<&str>) -> (String, bool) {
+    fn pick(&self, dept: Option<&str>, key: Option<&AffinityKey>) -> (String, bool) {
         if let Some(d) = dept {
             for route in &self.routes {
                 if route.dept == d {
@@ -211,10 +218,20 @@ impl Proxy {
                 }
             }
         }
-        if let (Some(pool), Some(text)) = (&self.prefix_pool, prompt) {
+        if let (Some(pool), Some(key)) = (&self.prefix_pool, key) {
             let mut router = pool.lock().expect("prefix router poisoned");
-            let idx = router.pick(text);
-            router.record(text, idx);
+            let idx = match key {
+                AffinityKey::Tokens(ids) => {
+                    let idx = router.pick_tokens(ids);
+                    router.record_tokens(ids, idx);
+                    idx
+                }
+                AffinityKey::Text(text) => {
+                    let idx = router.pick(text);
+                    router.record(text, idx);
+                    idx
+                }
+            };
             return (router.addr(idx).to_string(), false);
         }
         (self.addr.clone(), false)
@@ -232,8 +249,8 @@ impl Proxy {
         body: &str,
         dept: Option<&str>,
     ) -> std::io::Result<()> {
-        let prompt = extract_affinity_text(path, body);
-        let (addr, matched) = self.pick(dept, prompt.as_deref());
+        let key = extract_affinity_key(path, body);
+        let (addr, matched) = self.pick(dept, key.as_ref());
         if matched {
             self.routed.fetch_add(1, Ordering::Relaxed);
         }
@@ -300,8 +317,8 @@ impl Proxy {
     /// Forward one JSON request verbatim; passthrough (status, body).
     /// Upstream failures degrade to a 502 instead of poisoning the server.
     fn forward(&self, method: &str, path: &str, body: Option<&str>, dept: Option<&str>) -> HttpResponse {
-        let prompt = body.and_then(|b| extract_affinity_text(path, b));
-        let (addr, matched) = self.pick(dept, prompt.as_deref());
+        let key = body.and_then(|b| extract_affinity_key(path, b));
+        let (addr, matched) = self.pick(dept, key.as_ref());
         if matched {
             self.routed.fetch_add(1, Ordering::Relaxed);
         }
@@ -567,16 +584,24 @@ fn extract_user_text(path: &str, body: &str) -> Option<String> {
     None
 }
 
-/// Affinity key for sticky / prefix routing: `/generate` uses `text`; chat
-/// joins every message content in order so a shared system prompt sticks the
-/// whole trunk to one upstream (KV prefix cache affinity).
-fn extract_affinity_text(path: &str, body: &str) -> Option<String> {
+/// Affinity key for the prefix pool: prefer `input_ids` when present; else
+/// `/generate` `text` or joined chat `messages` (shared system trunk sticks).
+enum AffinityKey {
+    Text(String),
+    Tokens(Vec<u32>),
+}
+
+fn extract_affinity_key(path: &str, body: &str) -> Option<AffinityKey> {
     let v = crate::json::parse(body).ok()?;
+    // Token-id wire (issue #19): language-agnostic prefix affinity.
+    if let Some(ids) = crate::pd::parse_input_ids(&v) {
+        return Some(AffinityKey::Tokens(ids));
+    }
     if path == "/generate" {
         return v
             .get("text")
             .and_then(Value::as_str)
-            .map(str::to_string);
+            .map(|s| AffinityKey::Text(s.to_string()));
     }
     if let Some(Value::Array(items)) = v.get("messages") {
         let mut parts = Vec::new();
@@ -587,7 +612,7 @@ fn extract_affinity_text(path: &str, body: &str) -> Option<String> {
             }
         }
         if !parts.is_empty() {
-            return Some(parts.join("\n"));
+            return Some(AffinityKey::Text(parts.join("\n")));
         }
     }
     None
@@ -858,6 +883,10 @@ pub fn handle_with_pd<E: ServingEngine>(
                     fields.push((
                         "sticky_keys".to_string(),
                         Value::Number(proxy.sticky_keys() as f64),
+                    ));
+                    fields.push((
+                        "sticky_evictions".to_string(),
+                        Value::Number(proxy.sticky_evictions() as f64),
                     ));
                 }
                 let routes: Vec<Value> = proxy
