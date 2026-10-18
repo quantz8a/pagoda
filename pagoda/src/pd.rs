@@ -567,21 +567,34 @@ fn store_handle(core: &Mutex<StoreCore>, method: &str, path: &str, body: &str) -
     }
 }
 
+/// Default sticky map capacity (issue #19). Beyond this, LRU entries are
+/// evicted so many unique prompts cannot grow the map without bound.
+pub const DEFAULT_STICKY_CAPACITY: usize = 4096;
+
 /// Prefix-affinity router across several decode workers (Mooncake's
 /// conductor role): each prompt goes to the decode worker that has served the
 /// longest matching prompt prefix before, so the worker's local radix / KV
 /// cache pays off.
 ///
 /// Affinity layers (first hit wins):
-/// 1. exact prompt hash sticky map (identical prompts → same worker);
-/// 2. character-trie longest prefix with a prior worker;
+/// 1. exact sticky map (hash of text or token ids → worker), LRU/TTL bounded;
+/// 2. longest-prefix trie — character trie for text, token-id trie when the
+///    gateway already has `input_ids` (issue #19);
 /// 3. cold path: round-robin across the pool (spread new trunks).
 pub struct PrefixRouter {
     addrs: Vec<String>,
     urls: Vec<String>,
-    trie: Vec<TrieNode>,
-    /// Exact-prompt sticky: FNV-1a(prompt) → worker index.
-    sticky: HashMap<u64, usize>,
+    /// Character-keyed prefix affinity (text prompts).
+    trie: Vec<CharTrieNode>,
+    /// Token-id-keyed prefix affinity (`input_ids` path).
+    token_trie: Vec<TokenTrieNode>,
+    /// Exact sticky: FNV hash → worker + access clock.
+    sticky: HashMap<u64, StickySlot>,
+    sticky_capacity: usize,
+    /// Optional max age in logical clock ticks (`None` = LRU only).
+    sticky_ttl: Option<u64>,
+    sticky_clock: u64,
+    sticky_evictions: u64,
     /// Round-robin cursor among prefix-affined candidates.
     rr: usize,
     /// Round-robin cursor for cold prompts (no prefix evidence).
@@ -593,12 +606,31 @@ pub struct PrefixRouter {
     prefix_hits: u64,
 }
 
-struct TrieNode {
+struct StickySlot {
+    worker: usize,
+    last_used: u64,
+}
+
+struct CharTrieNode {
     children: HashMap<char, usize>,
     workers: Vec<bool>,
 }
 
-impl TrieNode {
+struct TokenTrieNode {
+    children: HashMap<u32, usize>,
+    workers: Vec<bool>,
+}
+
+impl CharTrieNode {
+    fn new(n_workers: usize) -> Self {
+        Self {
+            children: HashMap::new(),
+            workers: vec![false; n_workers],
+        }
+    }
+}
+
+impl TokenTrieNode {
     fn new(n_workers: usize) -> Self {
         Self {
             children: HashMap::new(),
@@ -621,14 +653,27 @@ impl PrefixRouter {
         Some(Self {
             addrs,
             urls: decode_urls.to_vec(),
-            trie: vec![TrieNode::new(n)],
+            trie: vec![CharTrieNode::new(n)],
+            token_trie: vec![TokenTrieNode::new(n)],
             sticky: HashMap::new(),
+            sticky_capacity: DEFAULT_STICKY_CAPACITY,
+            sticky_ttl: None,
+            sticky_clock: 0,
+            sticky_evictions: 0,
             rr: 0,
             rr_cold: 0,
             routed: vec![0; n],
             sticky_hits: 0,
             prefix_hits: 0,
         })
+    }
+
+    /// Cap the sticky map (`capacity` entries) and optionally expire unused
+    /// keys after `ttl_ticks` logical clock advances. Capacity of 0 means 1.
+    pub fn with_sticky_bound(mut self, capacity: usize, ttl_ticks: Option<u64>) -> Self {
+        self.sticky_capacity = capacity.max(1);
+        self.sticky_ttl = ttl_ticks;
+        self
     }
 
     /// Exact-prompt sticky hits so far.
@@ -646,6 +691,16 @@ impl PrefixRouter {
         self.sticky.len()
     }
 
+    /// Sticky entries dropped by LRU/TTL.
+    pub fn sticky_evictions(&self) -> u64 {
+        self.sticky_evictions
+    }
+
+    /// Configured sticky capacity.
+    pub fn sticky_capacity(&self) -> usize {
+        self.sticky_capacity
+    }
+
     /// Worker dial address (`host:port`) by index.
     pub fn addr(&self, idx: usize) -> &str {
         &self.addrs[idx]
@@ -661,57 +716,27 @@ impl PrefixRouter {
         &self.routed
     }
 
-    /// Decode worker for `prompt`: exact-hash sticky → longest-prefix → RR.
+    /// Decode worker for text `prompt`: sticky → char-trie prefix → RR.
     pub fn pick(&mut self, prompt: &str) -> usize {
         let h = prompt_sticky_hash(prompt);
-        if let Some(&idx) = self.sticky.get(&h) {
+        if let Some(idx) = self.sticky_lookup(h) {
             self.sticky_hits += 1;
             return idx;
         }
-        let mut node = 0usize;
-        let mut deepest = 0usize;
-        for ch in prompt.chars() {
-            match self.trie[node].children.get(&ch) {
-                Some(&next) => {
-                    node = next;
-                    if self.trie[node].workers.iter().any(|&w| w) {
-                        deepest = node;
-                    }
-                }
-                None => break,
-            }
-        }
-        // Prefix evidence only counts below the root: treating the root's
-        // warm workers as candidates would pin every cold prompt onto the
-        // first-used worker instead of spreading across the pool.
-        let candidates: Vec<usize> = if deepest == 0 {
-            Vec::new()
-        } else {
-            self.trie[deepest]
-                .workers
-                .iter()
-                .enumerate()
-                .filter_map(|(i, &w)| w.then_some(i))
-                .collect()
-        };
-        let n = self.addrs.len();
-        match candidates.len() {
-            0 => {
-                // New trunk: spread. Identical rematches hit `sticky` above.
-                let idx = self.rr_cold;
-                self.rr_cold = (self.rr_cold + 1) % n;
-                idx
-            }
-            k => {
-                self.prefix_hits += 1;
-                let idx = self.rr % k;
-                self.rr = (self.rr + 1) % k;
-                candidates[idx]
-            }
-        }
+        self.pick_from_char_trie(prompt)
     }
 
-    /// Remember that `worker` served `prompt`.
+    /// Decode worker for tokenized prompt: sticky → token-trie prefix → RR.
+    pub fn pick_tokens(&mut self, tokens: &[u32]) -> usize {
+        let h = tokens_sticky_hash(tokens);
+        if let Some(idx) = self.sticky_lookup(h) {
+            self.sticky_hits += 1;
+            return idx;
+        }
+        self.pick_from_token_trie(tokens)
+    }
+
+    /// Remember that `worker` served text `prompt`.
     ///
     /// Exact sticky rematches (same hash → same worker) only bump `routed`
     /// and skip the character-trie walk — that walk dominates proxy latency
@@ -719,24 +744,51 @@ impl PrefixRouter {
     /// the affinity.
     pub fn record(&mut self, prompt: &str, worker: usize) {
         let h = prompt_sticky_hash(prompt);
-        if self.sticky.get(&h) == Some(&worker) {
+        if self.sticky_lookup(h) == Some(worker) {
             self.routed[worker] += 1;
             return;
         }
-        self.sticky.insert(h, worker);
+        self.sticky_insert(h, worker);
         let mut node = 0usize;
         for ch in prompt.chars() {
             let next = match self.trie[node].children.get(&ch) {
                 Some(&next) => next,
                 None => {
                     let next = self.trie.len();
-                    self.trie.push(TrieNode::new(self.addrs.len()));
+                    self.trie.push(CharTrieNode::new(self.addrs.len()));
                     self.trie[node].children.insert(ch, next);
                     next
                 }
             };
             node = next;
             self.trie[node].workers[worker] = true;
+        }
+        self.routed[worker] += 1;
+    }
+
+    /// Remember that `worker` served a tokenized prompt. Sticky rematches
+    /// skip token-trie growth (same contract as [`Self::record`]).
+    pub fn record_tokens(&mut self, tokens: &[u32], worker: usize) {
+        let h = tokens_sticky_hash(tokens);
+        if self.sticky_lookup(h) == Some(worker) {
+            self.routed[worker] += 1;
+            return;
+        }
+        self.sticky_insert(h, worker);
+        let mut node = 0usize;
+        for &tok in tokens {
+            let next = match self.token_trie[node].children.get(&tok) {
+                Some(&next) => next,
+                None => {
+                    let next = self.token_trie.len();
+                    self.token_trie
+                        .push(TokenTrieNode::new(self.addrs.len()));
+                    self.token_trie[node].children.insert(tok, next);
+                    next
+                }
+            };
+            node = next;
+            self.token_trie[node].workers[worker] = true;
         }
         self.routed[worker] += 1;
     }
@@ -760,12 +812,24 @@ impl PrefixRouter {
                 Value::Number(self.trie.len() as f64),
             ),
             (
+                "token_affinity_nodes".to_string(),
+                Value::Number(self.token_trie.len() as f64),
+            ),
+            (
                 "sticky_keys".to_string(),
                 Value::Number(self.sticky.len() as f64),
             ),
             (
+                "sticky_capacity".to_string(),
+                Value::Number(self.sticky_capacity as f64),
+            ),
+            (
                 "sticky_hits".to_string(),
                 Value::Number(self.sticky_hits as f64),
+            ),
+            (
+                "sticky_evictions".to_string(),
+                Value::Number(self.sticky_evictions as f64),
             ),
             (
                 "prefix_hits".to_string(),
@@ -774,14 +838,172 @@ impl PrefixRouter {
         ])
         .to_json()
     }
+
+    fn sticky_lookup(&mut self, h: u64) -> Option<usize> {
+        self.purge_expired_sticky();
+        let now = self.sticky_clock;
+        let slot = self.sticky.get_mut(&h)?;
+        if let Some(ttl) = self.sticky_ttl {
+            if now.saturating_sub(slot.last_used) > ttl {
+                self.sticky.remove(&h);
+                self.sticky_evictions += 1;
+                return None;
+            }
+        }
+        slot.last_used = now;
+        self.sticky_clock = now.saturating_add(1);
+        Some(slot.worker)
+    }
+
+    fn sticky_insert(&mut self, h: u64, worker: usize) {
+        self.purge_expired_sticky();
+        let now = self.sticky_clock;
+        self.sticky_clock = now.saturating_add(1);
+        if let Some(slot) = self.sticky.get_mut(&h) {
+            slot.worker = worker;
+            slot.last_used = now;
+            return;
+        }
+        while self.sticky.len() >= self.sticky_capacity {
+            if !self.evict_one_sticky() {
+                break;
+            }
+        }
+        self.sticky.insert(
+            h,
+            StickySlot {
+                worker,
+                last_used: now,
+            },
+        );
+    }
+
+    fn purge_expired_sticky(&mut self) {
+        let Some(ttl) = self.sticky_ttl else {
+            return;
+        };
+        let now = self.sticky_clock;
+        let expired: Vec<u64> = self
+            .sticky
+            .iter()
+            .filter(|(_, s)| now.saturating_sub(s.last_used) > ttl)
+            .map(|(&k, _)| k)
+            .collect();
+        for k in expired {
+            self.sticky.remove(&k);
+            self.sticky_evictions += 1;
+        }
+    }
+
+    fn evict_one_sticky(&mut self) -> bool {
+        let Some((&victim, _)) = self
+            .sticky
+            .iter()
+            .min_by_key(|(_, s)| s.last_used)
+        else {
+            return false;
+        };
+        self.sticky.remove(&victim);
+        self.sticky_evictions += 1;
+        true
+    }
+
+    fn pick_from_char_trie(&mut self, prompt: &str) -> usize {
+        let mut node = 0usize;
+        let mut deepest = 0usize;
+        for ch in prompt.chars() {
+            match self.trie[node].children.get(&ch) {
+                Some(&next) => {
+                    node = next;
+                    if self.trie[node].workers.iter().any(|&w| w) {
+                        deepest = node;
+                    }
+                }
+                None => break,
+            }
+        }
+        let candidates = workers_at(&self.trie[deepest].workers, deepest);
+        self.finish_pick(candidates)
+    }
+
+    fn pick_from_token_trie(&mut self, tokens: &[u32]) -> usize {
+        let mut node = 0usize;
+        let mut deepest = 0usize;
+        for &tok in tokens {
+            match self.token_trie[node].children.get(&tok) {
+                Some(&next) => {
+                    node = next;
+                    if self.token_trie[node].workers.iter().any(|&w| w) {
+                        deepest = node;
+                    }
+                }
+                None => break,
+            }
+        }
+        let candidates = workers_at(&self.token_trie[deepest].workers, deepest);
+        self.finish_pick(candidates)
+    }
+
+    fn finish_pick(&mut self, candidates: Vec<usize>) -> usize {
+        let n = self.addrs.len();
+        match candidates.len() {
+            0 => {
+                let idx = self.rr_cold;
+                self.rr_cold = (self.rr_cold + 1) % n;
+                idx
+            }
+            k => {
+                self.prefix_hits += 1;
+                let idx = self.rr % k;
+                self.rr = (self.rr + 1) % k;
+                candidates[idx]
+            }
+        }
+    }
 }
 
-/// FNV-1a over UTF-8 bytes — sticky key for identical prompts.
+fn workers_at(workers: &[bool], deepest: usize) -> Vec<usize> {
+    // Prefix evidence only counts below the root: treating the root's warm
+    // workers as candidates would pin every cold prompt onto the first-used
+    // worker instead of spreading across the pool.
+    if deepest == 0 {
+        Vec::new()
+    } else {
+        workers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &w)| w.then_some(i))
+            .collect()
+    }
+}
+
+const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+const FNV_PRIME: u64 = 0x100000001b3;
+
+/// FNV-1a over UTF-8 bytes — sticky key for identical text prompts.
 pub fn prompt_sticky_hash(prompt: &str) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
+    let mut hash = FNV_OFFSET;
+    // Domain tag 0: text path (keeps token-hash space disjoint).
+    hash ^= 0;
+    hash = hash.wrapping_mul(FNV_PRIME);
     for byte in prompt.as_bytes() {
         hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+/// FNV-1a over little-endian token ids — sticky key for `input_ids`.
+pub fn tokens_sticky_hash(tokens: &[u32]) -> u64 {
+    let mut hash = FNV_OFFSET;
+    // Domain tag 1: token path.
+    hash ^= 1;
+    hash = hash.wrapping_mul(FNV_PRIME);
+    for &tok in tokens {
+        for byte in tok.to_le_bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
     }
     hash
 }
@@ -937,10 +1159,16 @@ fn router_handle(
                 );
             };
 
+            // Optional token-id affinity when the client already tokenized.
+            let input_ids = parse_input_ids(&v);
+
             // 2. Pick the prefix-affine decode worker and hand it the bundle.
             let (worker, addr) = {
                 let mut r = router.lock().unwrap();
-                let w = r.pick(text);
+                let w = match input_ids.as_deref() {
+                    Some(ids) => r.pick_tokens(ids),
+                    None => r.pick(text),
+                };
                 (w, r.addrs[w].clone())
             };
             let mut decode_body = format!(r#"{{"kv_key":"{key}""#);
@@ -973,7 +1201,11 @@ fn router_handle(
                 }
             };
             if up.status == 200 {
-                router.lock().unwrap().record(text, worker);
+                let mut r = router.lock().unwrap();
+                match input_ids.as_deref() {
+                    Some(ids) => r.record_tokens(ids, worker),
+                    None => r.record(text, worker),
+                }
             }
             if !up.chunked {
                 let mut buf = Vec::new();
@@ -1000,6 +1232,26 @@ fn router_handle(
             Ok(())
         }
         _ => write_http_response(stream, &HttpResponse::json(404, r#"{"error":"not found"}"#)),
+    }
+}
+
+/// Parse `input_ids` / `prompt` token arrays from a `/generate` JSON body.
+pub fn parse_input_ids(v: &Value) -> Option<Vec<u32>> {
+    let arr = v
+        .get("input_ids")
+        .or_else(|| v.get("prompt"))
+        .and_then(|p| match p {
+            Value::Array(a) => Some(a.as_slice()),
+            _ => None,
+        })?;
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        out.push(item.as_f64().map(|n| n as u32)?);
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
     }
 }
 

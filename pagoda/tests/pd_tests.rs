@@ -333,6 +333,121 @@ fn router_prefix_affinity() {
     );
 }
 
+/// Sticky map is LRU-capped; prefix affinity still sticks extensions (#19).
+#[test]
+fn router_sticky_lru_bound_and_prefix_extension() {
+    let workers = vec![
+        "http://127.0.0.1:1".to_string(),
+        "http://127.0.0.1:2".to_string(),
+    ];
+    let mut router = pd::PrefixRouter::new(&workers)
+        .unwrap()
+        .with_sticky_bound(2, None);
+    assert_eq!(router.sticky_capacity(), 2);
+
+    let a = router.pick("alpha");
+    router.record("alpha", a);
+    let b = router.pick("beta");
+    router.record("beta", b);
+    assert_eq!(router.sticky_keys(), 2);
+
+    // Third unique key forces an LRU eviction.
+    let c = router.pick("gamma");
+    router.record("gamma", c);
+    assert_eq!(router.sticky_keys(), 2, "capacity must hold");
+    assert!(
+        router.sticky_evictions() >= 1,
+        "expected sticky eviction, stats={}",
+        router.stats_json()
+    );
+    let stats = pagoda::json::parse(&router.stats_json()).unwrap();
+    assert!(
+        stats
+            .get("sticky_evictions")
+            .and_then(|n| n.as_f64())
+            .unwrap_or(0.0)
+            >= 1.0
+    );
+
+    // Prefix trie still sticks extensions even after sticky churn.
+    assert_eq!(router.pick("gamma-extension"), c);
+    assert!(router.prefix_hits() >= 1);
+}
+
+/// Sticky TTL expires unused keys and counts them as evictions (#19).
+#[test]
+fn router_sticky_ttl_expires() {
+    let workers = vec![
+        "http://127.0.0.1:1".to_string(),
+        "http://127.0.0.1:2".to_string(),
+    ];
+    // ttl=0 → any later clock tick expires the previous entry.
+    let mut router = pd::PrefixRouter::new(&workers)
+        .unwrap()
+        .with_sticky_bound(8, Some(0));
+    let w = router.pick("ttl-key");
+    router.record("ttl-key", w);
+    assert_eq!(router.sticky_keys(), 1);
+    // A different pick advances the sticky clock past ttl.
+    let _ = router.pick("other");
+    router.record("other", 0);
+    // Revisit ttl-key: expired sticky → miss, may still hit char-trie prefix.
+    let again = router.pick("ttl-key");
+    assert_eq!(again, w, "char-trie still sticks after sticky TTL expiry");
+    assert!(
+        router.sticky_evictions() >= 1,
+        "TTL expiry must count as eviction: {}",
+        router.stats_json()
+    );
+}
+
+/// Token-id trie: extensions stick; sticky rematch skips trie growth (#19).
+#[test]
+fn router_token_affinity_and_sticky() {
+    let workers = vec![
+        "http://127.0.0.1:1".to_string(),
+        "http://127.0.0.1:2".to_string(),
+    ];
+    let mut router = pd::PrefixRouter::new(&workers).unwrap();
+    let trunk = [10u32, 20, 30];
+    let w = router.pick_tokens(&trunk);
+    router.record_tokens(&trunk, w);
+    assert_eq!(w, 0, "first cold token prompt lands on worker 0");
+
+    let nodes_after = {
+        let stats = pagoda::json::parse(&router.stats_json()).unwrap();
+        stats
+            .get("token_affinity_nodes")
+            .and_then(|n| n.as_f64())
+            .unwrap() as usize
+    };
+    assert_eq!(router.pick_tokens(&trunk), w);
+    router.record_tokens(&trunk, w);
+    let nodes_rematch = {
+        let stats = pagoda::json::parse(&router.stats_json()).unwrap();
+        stats
+            .get("token_affinity_nodes")
+            .and_then(|n| n.as_f64())
+            .unwrap() as usize
+    };
+    assert_eq!(
+        nodes_rematch, nodes_after,
+        "token sticky rematch must skip trie growth"
+    );
+    assert!(router.sticky_hits() >= 1);
+
+    // Extension shares the trunk prefix → same worker.
+    let ext = [10u32, 20, 30, 40, 50];
+    assert_eq!(router.pick_tokens(&ext), w);
+    assert!(router.prefix_hits() >= 1);
+
+    assert_ne!(
+        pd::tokens_sticky_hash(&trunk),
+        pd::prompt_sticky_hash("10,20,30"),
+        "token and text sticky domains stay disjoint"
+    );
+}
+
 /// Cold RR starts at worker 0; sticky rematch skips trie growth.
 #[test]
 fn router_cold_rr_and_sticky_skips_trie() {

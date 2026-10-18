@@ -28,8 +28,12 @@ tokenizers = { version = "0.21", default-features = false, features = ["fancy-re
 candle-core = "0.8"
 candle-nn = "0.8"
 candle-transformers = "0.8"
+memmap2 = "0.9"
+metal = { version = "0.29", optional = true }
 
 [features]
-# Opt-in GPU support: building with `--features cuda` requires a CUDA 12.x
-# toolkit (nvcc) on PATH / CUDA_HOME. Default builds stay CPU-only.
+# Opt-in GPU support. Default builds stay CPU-only.
+# `cuda` needs a CUDA 12.x toolkit (nvcc) on PATH / CUDA_HOME.
+# `metal` needs Apple Silicon (the candle Metal backend). Do not enable both.
 cuda = ["candle-core/cuda", "candle-nn/cuda"]
+metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal", "dep:metal"]

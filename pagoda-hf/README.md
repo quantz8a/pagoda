@@ -15,6 +15,28 @@ the toy n-gram + byte stand-ins with real artifacts:
 > model weights. It is **not** compiled or exercised by the offline
 > `cargo build --offline` / `cargo test --offline` loop inside `pagoda`.
 
+## Qwen3.8 27B（文本）
+
+MLX 目录，8-bit affine。只跑 `language_model`，不跑视觉塔。和 mlx-serve 的贪心续写对过 `Hi` → `, I'm a`。`PAGODA_DEVICE=metal` 把反量化后的 F16 权重留在 GPU 上；第一次约 86 秒（上传），第 4 个 token 0.3 秒。
+
+```bash
+PAGODA_DEVICE=metal cargo run --release --features metal --example qwen3_8 -- \
+  --model ~/.mlx-serve/models/mlx-community/Qwen3.8-27B-8bit \
+  --prompt "Hi" --max-tokens 4
+```
+
+## Apple Silicon
+
+```bash
+cargo build --release --features metal --example qwen2_gguf
+PAGODA_DEVICE=metal cargo run --release --features metal --example qwen2_gguf -- \
+  --gguf /path/to/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  --tokenizer-file /path/to/tokenizer.json
+```
+
+`PAGODA_DEVICE=metal` 在没有 `--features metal` 的二进制上会直接报错，不会悄悄退回 CPU。
+实测见 [`../pagoda/docs/BENCHMARK-METAL.md`](../pagoda/docs/BENCHMARK-METAL.md)。
+
 ## Build
 
 ```powershell
