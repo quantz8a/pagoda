@@ -1,4 +1,4 @@
 {
   "title": "为什么用 pagoda",
-  "digest": "同一台 M3 Ultra、同一份 Qwen3.8。单流 23.5 对 23.3。四个已知 token 50.9。八个 Agent 前向少 98%。"
+  "digest": "同一份 Qwen3.8 上，pagoda 单流热解码 23.5 tok/s，mlx-serve 是 23.3。四个已知 token 一次验证 50.9 tok/s。八个 Agent 共用长提示，前向少 98%。"
 }
