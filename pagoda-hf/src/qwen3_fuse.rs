@@ -1161,6 +1161,499 @@ fn encode_full_layer(
     Ok(())
 }
 
+fn bytes(elems: usize) -> NSUInteger {
+    (elems * 4) as NSUInteger
+}
+
+fn encode_rmsnorm_at(
+    enc: &ComputeCommandEncoderRef,
+    x: &Buffer,
+    x_elems: usize,
+    w: &Buffer,
+    y: &Buffer,
+    y_elems: usize,
+    n: u32,
+) {
+    let o = ops().unwrap();
+    enc.set_compute_pipeline_state(&o.rmsnorm);
+    enc.set_buffer(0, Some(x), bytes(x_elems));
+    enc.set_buffer(1, Some(w), 0);
+    enc.set_buffer(2, Some(y), bytes(y_elems));
+    enc.set_bytes(3, 4, &n as *const u32 as *const _);
+    enc.dispatch_thread_groups(
+        MTLSize { width: 1, height: 1, depth: 1 },
+        MTLSize { width: 256, height: 1, depth: 1 },
+    );
+}
+
+fn encode_silu_mul_at(
+    enc: &ComputeCommandEncoderRef,
+    gate: &Buffer,
+    gate_elems: usize,
+    up: &Buffer,
+    up_elems: usize,
+    mid: &Buffer,
+    mid_elems: usize,
+    n: u32,
+) {
+    let o = ops().unwrap();
+    enc.set_compute_pipeline_state(&o.silu_mul);
+    enc.set_buffer(0, Some(gate), bytes(gate_elems));
+    enc.set_buffer(1, Some(up), bytes(up_elems));
+    enc.set_buffer(2, Some(mid), bytes(mid_elems));
+    enc.set_bytes(3, 4, &n as *const u32 as *const _);
+    enc.dispatch_threads(
+        MTLSize { width: n as NSUInteger, height: 1, depth: 1 },
+        MTLSize { width: 256, height: 1, depth: 1 },
+    );
+}
+
+fn encode_add_inplace_at(
+    enc: &ComputeCommandEncoderRef,
+    a: &Buffer,
+    a_elems: usize,
+    b: &Buffer,
+    b_elems: usize,
+    n: u32,
+) {
+    let o = ops().unwrap();
+    enc.set_compute_pipeline_state(&o.add_inplace);
+    enc.set_buffer(0, Some(a), bytes(a_elems));
+    enc.set_buffer(1, Some(b), bytes(b_elems));
+    enc.set_bytes(2, 4, &n as *const u32 as *const _);
+    enc.dispatch_threads(
+        MTLSize { width: n as NSUInteger, height: 1, depth: 1 },
+        MTLSize { width: 256, height: 1, depth: 1 },
+    );
+}
+
+fn encode_add2_at(
+    enc: &ComputeCommandEncoderRef,
+    a: &Buffer,
+    a_elems: usize,
+    b: &Buffer,
+    b_elems: usize,
+    out: &Buffer,
+    out_elems: usize,
+    n: u32,
+) {
+    let o = ops().unwrap();
+    enc.set_compute_pipeline_state(&o.add2);
+    enc.set_buffer(0, Some(a), bytes(a_elems));
+    enc.set_buffer(1, Some(b), bytes(b_elems));
+    enc.set_buffer(2, Some(out), bytes(out_elems));
+    enc.set_bytes(3, 4, &n as *const u32 as *const _);
+    enc.dispatch_threads(
+        MTLSize { width: n as NSUInteger, height: 1, depth: 1 },
+        MTLSize { width: 256, height: 1, depth: 1 },
+    );
+}
+
+fn encode_causal_conv_at(
+    enc: &ComputeCommandEncoderRef,
+    x: &Buffer,
+    x_elems: usize,
+    state: &Buffer,
+    weight: &Buffer,
+    y: &Buffer,
+    channels: u32,
+    kernel: u32,
+) {
+    let o = ops().unwrap();
+    enc.set_compute_pipeline_state(&o.causal_conv);
+    enc.set_buffer(0, Some(x), bytes(x_elems));
+    enc.set_buffer(1, Some(state), 0);
+    enc.set_buffer(2, Some(weight), 0);
+    enc.set_buffer(3, Some(y), 0);
+    enc.set_bytes(4, 4, &channels as *const u32 as *const _);
+    enc.set_bytes(5, 4, &kernel as *const u32 as *const _);
+    enc.dispatch_threads(
+        MTLSize { width: channels as NSUInteger, height: 1, depth: 1 },
+        MTLSize { width: 256, height: 1, depth: 1 },
+    );
+}
+
+fn encode_gated_delta_at(
+    enc: &ComputeCommandEncoderRef,
+    conv: &Buffer,
+    a: &Buffer,
+    a_elems: usize,
+    b: &Buffer,
+    b_elems: usize,
+    z: &Buffer,
+    z_elems: usize,
+    aux: &LinearAttnAux,
+    state: &Buffer,
+    out: &Buffer,
+    out_elems: usize,
+    params: &GatedDeltaParams,
+) {
+    let o = ops().unwrap();
+    enc.set_compute_pipeline_state(&o.gated_delta);
+    enc.set_buffer(0, Some(conv), 0);
+    enc.set_buffer(1, Some(a), bytes(a_elems));
+    enc.set_buffer(2, Some(b), bytes(b_elems));
+    enc.set_buffer(3, Some(z), bytes(z_elems));
+    enc.set_buffer(4, Some(&aux.a_log), 0);
+    enc.set_buffer(5, Some(&aux.dt_bias), 0);
+    enc.set_buffer(6, Some(&aux.norm), 0);
+    enc.set_buffer(7, Some(state), 0);
+    enc.set_buffer(8, Some(out), bytes(out_elems));
+    enc.set_bytes(
+        9,
+        std::mem::size_of::<GatedDeltaParams>() as NSUInteger,
+        params as *const GatedDeltaParams as *const _,
+    );
+    enc.dispatch_thread_groups(
+        MTLSize { width: params.v_heads as NSUInteger, height: 1, depth: 1 },
+        MTLSize { width: params.v_dim as NSUInteger, height: 1, depth: 1 },
+    );
+}
+
+fn encode_proj(enc: &ComputeCommandEncoderRef, m: &QuantMatrix, x: &Buffer, y: &Buffer, batch: u32) -> Result<()> {
+    if m.n_in() % 256 == 0 {
+        qwen3_gemv::encode_gemm4(enc, m, x, y, batch)
+    } else {
+        for t in 0..batch as usize {
+            qwen3_gemv::encode_into_at(
+                enc,
+                m,
+                x,
+                bytes(t * m.n_in()),
+                y,
+                bytes(t * m.n_out()),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn encode_linear_batch(
+    enc: &ComputeCommandEncoderRef,
+    x: &Buffer,
+    y: &Buffer,
+    layer: &LinearLayerOwned,
+    gpu: &GpuRecurrent,
+    s: &VerifyScratch,
+    batch: usize,
+) -> Result<()> {
+    let meta = &layer.meta;
+    let h = meta.hidden;
+    let b = batch as u32;
+    let n_h = h as u32;
+    let value_dim = meta.v_heads * meta.v_dim;
+    let repeat = meta.v_heads / meta.k_heads;
+    let gd = GatedDeltaParams {
+        k_heads: meta.k_heads as u32,
+        v_heads: meta.v_heads as u32,
+        k_dim: meta.k_dim as u32,
+        v_dim: meta.v_dim as u32,
+        repeat: repeat as u32,
+        key_dim: (meta.k_heads * meta.k_dim) as u32,
+        value_dim: value_dim as u32,
+    };
+    for t in 0..batch {
+        encode_rmsnorm_at(enc, x, t * h, &layer.input_norm, &s.normed, t * h, n_h);
+    }
+    encode_proj(enc, &layer.qkv, &s.normed, &s.qkv, b)?;
+    encode_proj(enc, &layer.z, &s.normed, &s.z, b)?;
+    encode_proj(enc, &layer.a, &s.normed, &s.a, b)?;
+    encode_proj(enc, &layer.b, &s.normed, &s.b, b)?;
+    for t in 0..batch {
+        encode_causal_conv_at(
+            enc,
+            &s.qkv,
+            t * meta.conv_dim,
+            &gpu.conv,
+            &layer.aux.conv_w,
+            &s.conv_y,
+            meta.conv_dim as u32,
+            meta.kernel as u32,
+        );
+        encode_gated_delta_at(
+            enc,
+            &s.conv_y,
+            &s.a,
+            t * meta.v_heads,
+            &s.b,
+            t * meta.v_heads,
+            &s.z,
+            t * value_dim,
+            &layer.aux,
+            &gpu.state,
+            &s.delta_out,
+            t * value_dim,
+            &gd,
+        );
+    }
+    encode_proj(enc, &layer.out, &s.delta_out, &s.mixed, b)?;
+    let mid_n = layer.gate.n_out();
+    for t in 0..batch {
+        encode_add2_at(enc, x, t * h, &s.mixed, t * h, y, t * h, n_h);
+        encode_rmsnorm_at(enc, y, t * h, &layer.post_norm, &s.post_n, t * h, n_h);
+    }
+    encode_proj(enc, &layer.gate, &s.post_n, &s.gate, b)?;
+    encode_proj(enc, &layer.up, &s.post_n, &s.up, b)?;
+    for t in 0..batch {
+        encode_silu_mul_at(enc, &s.gate, t * mid_n, &s.up, t * mid_n, &s.mid, t * mid_n, mid_n as u32);
+    }
+    encode_proj(enc, &layer.down, &s.mid, &s.down, b)?;
+    for t in 0..batch {
+        encode_add_inplace_at(enc, y, t * h, &s.down, t * h, n_h);
+    }
+    Ok(())
+}
+
+fn encode_full_batch(
+    enc: &ComputeCommandEncoderRef,
+    x: &Buffer,
+    y: &Buffer,
+    layer: &FullLayerOwned,
+    kv: &GpuKv,
+    kv_base: usize,
+    rope_cos: &Buffer,
+    rope_sin: &Buffer,
+    s: &VerifyScratch,
+    batch: usize,
+) -> Result<()> {
+    let meta = &layer.meta;
+    let h = meta.hidden;
+    let n_h = h as u32;
+    let b = batch as u32;
+    let groups = meta.heads / meta.kv_heads;
+    let q_span = meta.heads * meta.head_dim * 2;
+    let kv_n = meta.kv_heads * meta.head_dim;
+    let q_n = meta.heads * meta.head_dim;
+    anyhow::ensure!(layer.o.n_in() == q_n, "attn out width");
+    let o = ops()?;
+    let head_tg = MTLSize { width: meta.head_dim as NSUInteger, height: 1, depth: 1 };
+    for t in 0..batch {
+        encode_rmsnorm_at(enc, x, t * h, &layer.input_norm, &s.normed, t * h, n_h);
+    }
+    encode_proj(enc, &layer.q, &s.normed, &s.fq_raw, b)?;
+    encode_proj(enc, &layer.k, &s.normed, &s.fk_raw, b)?;
+    encode_proj(enc, &layer.v, &s.normed, &s.fv_raw, b)?;
+    for t in 0..batch {
+        let fm = FullMeta {
+            heads: meta.heads as u32,
+            kv_heads: meta.kv_heads as u32,
+            head_dim: meta.head_dim as u32,
+            rotary_dim: meta.rotary_dim as u32,
+            groups: groups as u32,
+            kv_len: (kv_base + t + 1) as u32,
+            kv_cap: kv.cap as u32,
+            scale_inv: (meta.head_dim as f32).sqrt().recip(),
+        };
+        let rope = bytes(t * meta.rotary_dim);
+        enc.set_compute_pipeline_state(&o.full_q_prep);
+        enc.set_buffer(0, Some(&s.fq_raw), bytes(t * q_span));
+        enc.set_buffer(1, Some(&layer.q_norm), 0);
+        enc.set_buffer(2, Some(rope_cos), rope);
+        enc.set_buffer(3, Some(rope_sin), rope);
+        enc.set_buffer(4, Some(&s.fq), 0);
+        enc.set_buffer(5, Some(&s.fgate), 0);
+        enc.set_bytes(6, std::mem::size_of::<FullMeta>() as NSUInteger, &fm as *const _ as *const _);
+        enc.dispatch_thread_groups(
+            MTLSize { width: meta.heads as NSUInteger, height: 1, depth: 1 },
+            head_tg,
+        );
+        enc.set_compute_pipeline_state(&o.full_kv_prep);
+        enc.set_buffer(0, Some(&s.fk_raw), bytes(t * kv_n));
+        enc.set_buffer(1, Some(&s.fv_raw), bytes(t * kv_n));
+        enc.set_buffer(2, Some(&layer.k_norm), 0);
+        enc.set_buffer(3, Some(rope_cos), rope);
+        enc.set_buffer(4, Some(rope_sin), rope);
+        enc.set_buffer(5, Some(&kv.k), 0);
+        enc.set_buffer(6, Some(&kv.v), 0);
+        enc.set_bytes(7, std::mem::size_of::<FullMeta>() as NSUInteger, &fm as *const _ as *const _);
+        enc.dispatch_thread_groups(
+            MTLSize { width: meta.kv_heads as NSUInteger, height: 1, depth: 1 },
+            head_tg,
+        );
+        enc.set_compute_pipeline_state(&o.full_attn);
+        enc.set_buffer(0, Some(&s.fq), 0);
+        enc.set_buffer(1, Some(&s.fgate), 0);
+        enc.set_buffer(2, Some(&kv.k), 0);
+        enc.set_buffer(3, Some(&kv.v), 0);
+        enc.set_buffer(4, Some(&s.fattn), bytes(t * q_n));
+        enc.set_bytes(5, std::mem::size_of::<FullMeta>() as NSUInteger, &fm as *const _ as *const _);
+        enc.dispatch_thread_groups(
+            MTLSize { width: meta.heads as NSUInteger, height: 1, depth: 1 },
+            MTLSize { width: 32, height: 1, depth: 1 },
+        );
+    }
+    encode_proj(enc, &layer.o, &s.fattn, &s.mixed, b)?;
+    let mid_n = layer.gate.n_out();
+    for t in 0..batch {
+        encode_add2_at(enc, x, t * h, &s.mixed, t * h, y, t * h, n_h);
+        encode_rmsnorm_at(enc, y, t * h, &layer.post_norm, &s.post_n, t * h, n_h);
+    }
+    encode_proj(enc, &layer.gate, &s.post_n, &s.gate, b)?;
+    encode_proj(enc, &layer.up, &s.post_n, &s.up, b)?;
+    for t in 0..batch {
+        encode_silu_mul_at(enc, &s.gate, t * mid_n, &s.up, t * mid_n, &s.mid, t * mid_n, mid_n as u32);
+    }
+    encode_proj(enc, &layer.down, &s.mid, &s.down, b)?;
+    for t in 0..batch {
+        encode_add_inplace_at(enc, y, t * h, &s.down, t * h, n_h);
+    }
+    Ok(())
+}
+
+struct VerifyScratch {
+    normed: Buffer,
+    qkv: Buffer,
+    z: Buffer,
+    a: Buffer,
+    b: Buffer,
+    conv_y: Buffer,
+    delta_out: Buffer,
+    mixed: Buffer,
+    post_n: Buffer,
+    gate: Buffer,
+    up: Buffer,
+    mid: Buffer,
+    down: Buffer,
+    fq_raw: Buffer,
+    fk_raw: Buffer,
+    fv_raw: Buffer,
+    fq: Buffer,
+    fgate: Buffer,
+    fattn: Buffer,
+}
+
+fn verify_scratch(lin: &LinearLayerMeta, full: &FullLayerMeta, mid_n: usize, batch: usize) -> Result<VerifyScratch> {
+    let value_dim = lin.v_heads * lin.v_dim;
+    let q_span = full.heads * full.head_dim * 2;
+    let kv_n = full.kv_heads * full.head_dim;
+    let q_n = full.heads * full.head_dim;
+    Ok(VerifyScratch {
+        normed: buf_zeros(batch * lin.hidden)?,
+        qkv: buf_zeros(batch * lin.conv_dim)?,
+        z: buf_zeros(batch * value_dim)?,
+        a: buf_zeros(batch * lin.v_heads)?,
+        b: buf_zeros(batch * lin.v_heads)?,
+        conv_y: buf_zeros(lin.conv_dim)?,
+        delta_out: buf_zeros(batch * value_dim)?,
+        mixed: buf_zeros(batch * lin.hidden)?,
+        post_n: buf_zeros(batch * lin.hidden)?,
+        gate: buf_zeros(batch * mid_n)?,
+        up: buf_zeros(batch * mid_n)?,
+        mid: buf_zeros(batch * mid_n)?,
+        down: buf_zeros(batch * lin.hidden)?,
+        fq_raw: buf_zeros(batch * q_span)?,
+        fk_raw: buf_zeros(batch * kv_n)?,
+        fv_raw: buf_zeros(batch * kv_n)?,
+        fq: buf_zeros(q_n)?,
+        fgate: buf_zeros(q_n)?,
+        fattn: buf_zeros(batch * q_n)?,
+    })
+}
+
+/// Teacher-forced verify of `batch` tokens (1..=4). One weight read per big
+/// projection; recurrent and attention steps stay in token order. Logits match
+/// `batch` serial greedy steps when the cache starts from the same state.
+pub fn fused_verify(
+    embed: &QuantMatrix,
+    token_ids: &[u32],
+    layers: &[DecodeLayer<'_>],
+    kv_bases: &[usize],
+    rope_cos: &[f32],
+    rope_sin: &[f32],
+    lin_meta: &LinearLayerMeta,
+    full_meta: &FullLayerMeta,
+    mid_n: usize,
+    final_norm: &Buffer,
+    head: &QuantMatrix,
+) -> Result<Vec<(u32, f32)>> {
+    let batch = token_ids.len();
+    anyhow::ensure!((1..=4).contains(&batch), "verify batch 1..=4");
+    anyhow::ensure!(rope_cos.len() == batch * full_meta.rotary_dim, "rope");
+    anyhow::ensure!(rope_sin.len() == rope_cos.len(), "rope sin");
+    let h = lin_meta.hidden;
+    let scratch = verify_scratch(lin_meta, full_meta, mid_n, batch)?;
+    let ping = buf_zeros(batch * h)?;
+    let pong = buf_zeros(batch * h)?;
+    let rope_c = buf_f32(rope_cos)?;
+    let rope_s = buf_f32(rope_sin)?;
+    let vocab = head.n_out();
+    let logits = buf_zeros(batch * vocab)?;
+    let n_tg = 256usize;
+    let idx_b = buf_zeros(batch * n_tg)?;
+    let val_b = buf_zeros(batch * n_tg)?;
+
+    let o = ops()?;
+    let cb = o.queue.new_command_buffer();
+    let enc = cb.new_compute_command_encoder();
+    for (t, &id) in token_ids.iter().enumerate() {
+        qwen3_gemv::encode_dequant_row_at(enc, embed, id, &ping, bytes(t * h))?;
+    }
+    let mut use_ping = true;
+    let mut full_i = 0usize;
+    for layer in layers {
+        let (src, dst) = if use_ping { (&ping, &pong) } else { (&pong, &ping) };
+        match layer {
+            DecodeLayer::Linear(owned, gpu) => {
+                encode_linear_batch(enc, src, dst, owned, gpu, &scratch, batch)?;
+            }
+            DecodeLayer::Full(owned, kv) => {
+                encode_full_batch(
+                    enc,
+                    src,
+                    dst,
+                    owned,
+                    kv,
+                    kv_bases[full_i],
+                    &rope_c,
+                    &rope_s,
+                    &scratch,
+                    batch,
+                )?;
+                full_i += 1;
+            }
+        }
+        use_ping = !use_ping;
+    }
+    let hidden = if use_ping { &ping } else { &pong };
+    for t in 0..batch {
+        encode_rmsnorm_at(enc, hidden, t * h, final_norm, &scratch.normed, t * h, h as u32);
+    }
+    qwen3_gemv::encode_gemm4(enc, head, &scratch.normed, &logits, batch as u32)?;
+    let n = vocab as u32;
+    for t in 0..batch {
+        enc.set_compute_pipeline_state(&o.argmax);
+        enc.set_buffer(0, Some(&logits), bytes(t * vocab));
+        enc.set_buffer(1, Some(&idx_b), bytes(t * n_tg));
+        enc.set_buffer(2, Some(&val_b), bytes(t * n_tg));
+        enc.set_bytes(3, 4, &n as *const u32 as *const _);
+        enc.dispatch_thread_groups(
+            MTLSize { width: n_tg as NSUInteger, height: 1, depth: 1 },
+            MTLSize { width: 256, height: 1, depth: 1 },
+        );
+    }
+    enc.end_encoding();
+    cb.commit();
+    cb.wait_until_completed();
+    let idxs = read_f32_u32(&idx_b, batch * n_tg);
+    let vals = read_f32(&val_b, batch * n_tg);
+    let mut out = Vec::with_capacity(batch);
+    for t in 0..batch {
+        let best = idxs[t * n_tg..(t + 1) * n_tg]
+            .iter()
+            .zip(vals[t * n_tg..(t + 1) * n_tg].iter())
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .map(|(&i, &v)| (i, v))
+            .unwrap();
+        out.push(best);
+    }
+    Ok(out)
+}
+
+fn read_f32_u32(buf: &Buffer, n: usize) -> Vec<u32> {
+    let ptr = buf.contents() as *const u32;
+    unsafe { std::slice::from_raw_parts(ptr, n) }.to_vec()
+}
+
 /// One layer in a full-model decode encode.
 pub enum DecodeLayer<'a> {
     Linear(&'a LinearLayerOwned, &'a GpuRecurrent),

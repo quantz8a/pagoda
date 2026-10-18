@@ -58,7 +58,7 @@ pub use llama::{OwnedLlama, SessionKv};
 pub mod qwen2_gguf;
 pub use qwen2_gguf::Qwen2Gguf;
 pub mod qwen3_5;
-pub use qwen3_5::Qwen35;
+pub use qwen3_5::{Qwen35, Qwen35Cache};
 #[cfg(feature = "metal")]
 mod qwen3_gemv;
 #[cfg(feature = "metal")]
