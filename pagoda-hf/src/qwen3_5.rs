@@ -444,6 +444,103 @@ impl Qwen35 {
         Ok(out)
     }
 
+    /// Teacher-forced next-token for each of `tokens` (1..=4) in one forward.
+    /// Big projections use the batched GEMM; delta and attention stay in order.
+    #[cfg(feature = "metal")]
+    pub fn forward_verify(
+        &self,
+        tokens: &[u32],
+        cache: &mut Qwen35Cache,
+    ) -> Result<Vec<(u32, f32)>> {
+        anyhow::ensure!((1..=4).contains(&tokens.len()), "verify batch");
+        anyhow::ensure!(!self.device.is_cpu(), "verify is metal-only");
+        for &id in tokens {
+            anyhow::ensure!((id as usize) < self.vocab, "token {id} out of vocab");
+        }
+        let batch = tokens.len();
+        let pos0 = cache.len;
+        let limit = self.layers.len();
+        self.ensure_metal_layers(limit, cache)?;
+        let mut kv_bases = Vec::new();
+        for li in 0..limit {
+            if matches!(self.layers[li].mixer, Mixer::Full(_)) {
+                let kv = cache.layers[li].gpu_kv.as_mut().unwrap();
+                kv_bases.push(kv.len);
+                kv.ensure_cap(kv.len + batch)?;
+                kv.len += batch;
+            }
+        }
+        let mut cos = Vec::with_capacity(batch * self.rotary_dim);
+        let mut sin = Vec::with_capacity(batch * self.rotary_dim);
+        for t in 0..batch {
+            let (c, s) = rope_cos_sin(pos0 + t, self.rotary_dim, self.rope_theta);
+            cos.extend(c);
+            sin.extend(s);
+        }
+        let lin_guards: Vec<_> = (0..limit)
+            .filter(|&li| matches!(self.layers[li].mixer, Mixer::Linear(_)))
+            .map(|li| {
+                self.layers[li]
+                    .metal_linear
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+            })
+            .collect();
+        let full_guards: Vec<_> = (0..limit)
+            .filter(|&li| matches!(self.layers[li].mixer, Mixer::Full(_)))
+            .map(|li| {
+                self.layers[li]
+                    .metal_full
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+            })
+            .collect();
+        let mut decode = Vec::with_capacity(limit);
+        let mut lin_i = 0usize;
+        let mut full_i = 0usize;
+        for li in 0..limit {
+            match &self.layers[li].mixer {
+                Mixer::Linear(_) => {
+                    decode.push(crate::qwen3_fuse::DecodeLayer::Linear(
+                        lin_guards[lin_i].as_ref().unwrap(),
+                        cache.layers[li].gpu.as_ref().unwrap(),
+                    ));
+                    lin_i += 1;
+                }
+                Mixer::Full(_) => {
+                    decode.push(crate::qwen3_fuse::DecodeLayer::Full(
+                        full_guards[full_i].as_ref().unwrap(),
+                        cache.layers[li].gpu_kv.as_ref().unwrap(),
+                    ));
+                    full_i += 1;
+                }
+            }
+        }
+        let (lin_meta, full_meta, mid_n) = {
+            let first_lin = lin_guards[0].as_ref().unwrap();
+            let first_full = full_guards[0].as_ref().unwrap();
+            (first_lin.meta, first_full.meta, first_lin.gate.n_out())
+        };
+        let final_norm = crate::qwen3_fuse::cached_final_norm(&self.final_norm)?;
+        let head = self.head.quant_cloned(&self.maps)?;
+        let embed = self.embed.quant_cloned(&self.maps)?;
+        let out = crate::qwen3_fuse::fused_verify(
+            &embed,
+            tokens,
+            &decode,
+            &kv_bases,
+            &cos,
+            &sin,
+            &lin_meta,
+            &full_meta,
+            mid_n,
+            final_norm,
+            &head,
+        )?;
+        cache.len += batch;
+        Ok(out)
+    }
+
     fn forward_hidden(&self, tokens: &[u32], cache: &mut Qwen35Cache) -> Result<Vec<f32>> {
         anyhow::ensure!(!tokens.is_empty(), "empty feed");
         let seq = tokens.len();

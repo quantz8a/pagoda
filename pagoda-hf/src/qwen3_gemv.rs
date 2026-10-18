@@ -402,6 +402,169 @@ kernel void dequant_row(
         y[i] = bf16(bc[g]) + bf16(sc[g]) * float(row[i]);
     }
 }
+
+// Small-batch GEMM. Each batch row uses the same per-group fma as affine_gemv,
+// so one weight read verifies up to 4 tokens. xs, ys are [batch, n_in/n_out].
+struct GemmParams {
+    int n_in;
+    int n_out;
+    int batch;
+};
+
+kernel void affine_gemm4(
+    device const uint* packed [[buffer(0)]],
+    device const ushort* scales [[buffer(1)]],
+    device const ushort* biases [[buffer(2)]],
+    device const float* xs [[buffer(3)]],
+    device float* ys [[buffer(4)]],
+    constant GemmParams& params [[buffer(5)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
+    const int n_in = params.n_in;
+    const int n_out = params.n_out;
+    const int batch = params.batch;
+    const int out_row = int(tid.y) * (NUM_SIMDGROUPS * RESULTS_PER_SG)
+        + int(simd_gid) * RESULTS_PER_SG;
+    if (out_row >= n_out) {
+        return;
+    }
+    const int last_row = min(RESULTS_PER_SG - 1, n_out - 1 - out_row);
+    const int groups = n_in / GROUP_SIZE;
+    device const uchar* ws = (device const uchar*)packed;
+    ws += out_row * n_in + int(simd_lid) * VALUES_PER_THREAD;
+    device const ushort* sc = scales + out_row * groups + int(simd_lid) / (GROUP_SIZE / VALUES_PER_THREAD);
+    device const ushort* bc = biases + out_row * groups + int(simd_lid) / (GROUP_SIZE / VALUES_PER_THREAD);
+
+    float r0[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float r1[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float r2[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float r3[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    for (int k = 0; k < n_in; k += BLOCK_SIZE) {
+        int s1 = min(1, last_row), s2 = min(2, last_row), s3 = min(3, last_row);
+        uint2 w0 = *(device const uint2*)(ws);
+        uint2 w1 = *(device const uint2*)(ws + s1 * n_in);
+        uint2 w2 = *(device const uint2*)(ws + s2 * n_in);
+        uint2 w3 = *(device const uint2*)(ws + s3 * n_in);
+        float s0 = bf16(sc[0]), b0 = bf16(bc[0]);
+        float ss1 = bf16(sc[s1 * groups]), bb1 = bf16(bc[s1 * groups]);
+        float ss2 = bf16(sc[s2 * groups]), bb2 = bf16(bc[s2 * groups]);
+        float ss3 = bf16(sc[s3 * groups]), bb3 = bf16(bc[s3 * groups]);
+        for (int b = 0; b < batch; ++b) {
+            device const float* xv = xs + b * n_in + k + int(simd_lid) * VALUES_PER_THREAD;
+            float4 x0 = *(device const float4*)xv;
+            float4 x1 = *(device const float4*)(xv + 4);
+            float xsum = x0[0] + x0[1] + x0[2] + x0[3] + x1[0] + x1[1] + x1[2] + x1[3];
+            r0[b] = fma(s0, dot8(w0, x0, x1), fma(xsum, b0, r0[b]));
+            r1[b] = fma(ss1, dot8(w1, x0, x1), fma(xsum, bb1, r1[b]));
+            r2[b] = fma(ss2, dot8(w2, x0, x1), fma(xsum, bb2, r2[b]));
+            r3[b] = fma(ss3, dot8(w3, x0, x1), fma(xsum, bb3, r3[b]));
+        }
+        ws += BLOCK_SIZE;
+        sc += BLOCK_SIZE / GROUP_SIZE;
+        bc += BLOCK_SIZE / GROUP_SIZE;
+    }
+
+    for (int b = 0; b < batch; ++b) {
+        r0[b] = simd_sum(r0[b]);
+        r1[b] = simd_sum(r1[b]);
+        r2[b] = simd_sum(r2[b]);
+        r3[b] = simd_sum(r3[b]);
+        if (simd_lid == 0u) {
+            device float* y = ys + b * n_out;
+            y[out_row] = r0[b];
+            if (last_row >= 1) { y[out_row + 1] = r1[b]; }
+            if (last_row >= 2) { y[out_row + 2] = r2[b]; }
+            if (last_row >= 3) { y[out_row + 3] = r3[b]; }
+        }
+    }
+}
+
+// batch == 4 and n_out % 8 == 0. Four independent dots, weights loaded once.
+kernel void affine_gemm4u(
+    device const uint* packed [[buffer(0)]],
+    device const ushort* scales [[buffer(1)]],
+    device const ushort* biases [[buffer(2)]],
+    device const float* xs [[buffer(3)]],
+    device float* ys [[buffer(4)]],
+    constant GemmParams& params [[buffer(5)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
+    const int n_in = params.n_in;
+    const int n_out = params.n_out;
+    const int out_row = int(tid.y) * (NUM_SIMDGROUPS * RESULTS_PER_SG)
+        + int(simd_gid) * RESULTS_PER_SG;
+    if (out_row >= n_out) {
+        return;
+    }
+    const int groups = n_in / GROUP_SIZE;
+    device const uchar* ws = (device const uchar*)packed;
+    ws += out_row * n_in + int(simd_lid) * VALUES_PER_THREAD;
+    device const ushort* sc = scales + out_row * groups + int(simd_lid) / (GROUP_SIZE / VALUES_PER_THREAD);
+    device const ushort* bc = biases + out_row * groups + int(simd_lid) / (GROUP_SIZE / VALUES_PER_THREAD);
+    float a0=0, a1=0, a2=0, a3=0;
+    float b0=0, b1=0, b2=0, b3=0;
+    float c0=0, c1=0, c2=0, c3=0;
+    float d0=0, d1=0, d2=0, d3=0;
+    for (int k = 0; k < n_in; k += BLOCK_SIZE) {
+        uint2 w0 = *(device const uint2*)(ws);
+        uint2 w1 = *(device const uint2*)(ws + n_in);
+        uint2 w2 = *(device const uint2*)(ws + 2 * n_in);
+        uint2 w3 = *(device const uint2*)(ws + 3 * n_in);
+        float s0 = bf16(sc[0]), z0 = bf16(bc[0]);
+        float s1 = bf16(sc[groups]), z1 = bf16(bc[groups]);
+        float s2 = bf16(sc[2 * groups]), z2 = bf16(bc[2 * groups]);
+        float s3 = bf16(sc[3 * groups]), z3 = bf16(bc[3 * groups]);
+        for (int b = 0; b < 4; ++b) {
+            device const float* xv = xs + b * n_in + k + int(simd_lid) * VALUES_PER_THREAD;
+            float4 x0 = *(device const float4*)xv;
+            float4 x1 = *(device const float4*)(xv + 4);
+            float xsum = x0[0] + x0[1] + x0[2] + x0[3] + x1[0] + x1[1] + x1[2] + x1[3];
+            float d = dot8(w0, x0, x1);
+            float e = dot8(w1, x0, x1);
+            float f = dot8(w2, x0, x1);
+            float g = dot8(w3, x0, x1);
+            if (b == 0) {
+                a0 = fma(s0, d, fma(xsum, z0, a0));
+                b0 = fma(s1, e, fma(xsum, z1, b0));
+                c0 = fma(s2, f, fma(xsum, z2, c0));
+                d0 = fma(s3, g, fma(xsum, z3, d0));
+            } else if (b == 1) {
+                a1 = fma(s0, d, fma(xsum, z0, a1));
+                b1 = fma(s1, e, fma(xsum, z1, b1));
+                c1 = fma(s2, f, fma(xsum, z2, c1));
+                d1 = fma(s3, g, fma(xsum, z3, d1));
+            } else if (b == 2) {
+                a2 = fma(s0, d, fma(xsum, z0, a2));
+                b2 = fma(s1, e, fma(xsum, z1, b2));
+                c2 = fma(s2, f, fma(xsum, z2, c2));
+                d2 = fma(s3, g, fma(xsum, z3, d2));
+            } else {
+                a3 = fma(s0, d, fma(xsum, z0, a3));
+                b3 = fma(s1, e, fma(xsum, z1, b3));
+                c3 = fma(s2, f, fma(xsum, z2, c3));
+                d3 = fma(s3, g, fma(xsum, z3, d3));
+            }
+        }
+        ws += BLOCK_SIZE;
+        sc += BLOCK_SIZE / GROUP_SIZE;
+        bc += BLOCK_SIZE / GROUP_SIZE;
+    }
+    a0 = simd_sum(a0); b0 = simd_sum(b0); c0 = simd_sum(c0); d0 = simd_sum(d0);
+    a1 = simd_sum(a1); b1 = simd_sum(b1); c1 = simd_sum(c1); d1 = simd_sum(d1);
+    a2 = simd_sum(a2); b2 = simd_sum(b2); c2 = simd_sum(c2); d2 = simd_sum(d2);
+    a3 = simd_sum(a3); b3 = simd_sum(b3); c3 = simd_sum(c3); d3 = simd_sum(d3);
+    if (simd_lid == 0u) {
+        ys[out_row] = a0; ys[out_row + 1] = b0; ys[out_row + 2] = c0; ys[out_row + 3] = d0;
+        ys[n_out + out_row] = a1; ys[n_out + out_row + 1] = b1; ys[n_out + out_row + 2] = c1; ys[n_out + out_row + 3] = d1;
+        ys[2 * n_out + out_row] = a2; ys[2 * n_out + out_row + 1] = b2; ys[2 * n_out + out_row + 2] = c2; ys[2 * n_out + out_row + 3] = d2;
+        ys[3 * n_out + out_row] = a3; ys[3 * n_out + out_row + 1] = b3; ys[3 * n_out + out_row + 2] = c3; ys[3 * n_out + out_row + 3] = d3;
+    }
+}
 "#;
 
 fn f32_to_bf16(x: f32) -> u16 {
@@ -417,6 +580,8 @@ struct Pipe {
     state_n: ComputePipelineState,
     state_silu: ComputePipelineState,
     state_res: ComputePipelineState,
+    state_gemm: ComputePipelineState,
+    state_gemmu: ComputePipelineState,
     #[allow(dead_code)]
     state_s4: ComputePipelineState,
     #[allow(dead_code)]
@@ -450,6 +615,8 @@ fn pipe() -> Result<&'static Pipe> {
     let state_n = make("affine_gemv_n")?;
     let state_silu = make("affine_gemv2_silu")?;
     let state_res = make("affine_gemv_res")?;
+    let state_gemm = make("affine_gemm4")?;
+    let state_gemmu = make("affine_gemm4u")?;
     let state_s4 = make("affine_gemv_s4")?;
     let state_red = make("reduce_s4")?;
     let state_row = make("dequant_row")?;
@@ -461,6 +628,8 @@ fn pipe() -> Result<&'static Pipe> {
         state_n,
         state_silu,
         state_res,
+        state_gemm,
+        state_gemmu,
         state_s4,
         state_red,
         state_row,
@@ -652,6 +821,30 @@ fn read_f32(buf: &Buffer, n: usize) -> Vec<f32> {
     unsafe { std::slice::from_raw_parts(ptr, n) }.to_vec()
 }
 
+/// Batched GEMM, `batch` in 1..=4. `xs` is `[batch, n_in]`, `ys` is `[batch, n_out]`.
+/// Each row uses the same group fma as [`encode_into`].
+pub fn encode_gemm4(
+    enc: &ComputeCommandEncoderRef,
+    m: &QuantMatrix,
+    xs: &Buffer,
+    ys: &Buffer,
+    batch: u32,
+) -> Result<()> {
+    anyhow::ensure!((1..=4).contains(&batch), "gemm batch 1..=4");
+    let p = pipe()?;
+    let fast = batch == 4 && m.n_out % 8 == 0 && m.n_in % 256 == 0;
+    enc.set_compute_pipeline_state(if fast { &p.state_gemmu } else { &p.state_gemm });
+    enc.set_buffer(0, Some(&m.packed), 0);
+    enc.set_buffer(1, Some(&m.scales), 0);
+    enc.set_buffer(2, Some(&m.biases), 0);
+    enc.set_buffer(3, Some(xs), 0);
+    enc.set_buffer(4, Some(ys), 0);
+    let params = [m.n_in as i32, m.n_out as i32, batch as i32];
+    enc.set_bytes(5, 12, params.as_ptr() as *const _);
+    dispatch_rows(enc, m.n_out);
+    Ok(())
+}
+
 /// Encode a GEMV into an existing compute encoder (no commit / wait).
 pub fn encode_into(
     enc: &ComputeCommandEncoderRef,
@@ -659,8 +852,27 @@ pub fn encode_into(
     x: &Buffer,
     y: &Buffer,
 ) -> Result<()> {
+    encode_into_at(enc, m, x, 0, y, 0)
+}
+
+pub fn encode_into_at(
+    enc: &ComputeCommandEncoderRef,
+    m: &QuantMatrix,
+    x: &Buffer,
+    x_byte_off: NSUInteger,
+    y: &Buffer,
+    y_byte_off: NSUInteger,
+) -> Result<()> {
     let p = pipe()?;
-    encode_gemv(enc, &p.state, m, x, y);
+    enc.set_compute_pipeline_state(&p.state);
+    enc.set_buffer(0, Some(&m.packed), 0);
+    enc.set_buffer(1, Some(&m.scales), 0);
+    enc.set_buffer(2, Some(&m.biases), 0);
+    enc.set_buffer(3, Some(x), x_byte_off);
+    enc.set_buffer(4, Some(y), y_byte_off);
+    let params = [m.n_in as i32, m.n_out as i32];
+    enc.set_bytes(5, 8, params.as_ptr() as *const _);
+    dispatch_rows(enc, m.n_out);
     Ok(())
 }
 
@@ -780,6 +992,29 @@ pub fn encode_dequant_row(
     Ok(())
 }
 
+pub fn encode_dequant_row_at(
+    enc: &ComputeCommandEncoderRef,
+    m: &QuantMatrix,
+    token: u32,
+    y: &Buffer,
+    y_byte_off: NSUInteger,
+) -> Result<()> {
+    let p = pipe()?;
+    enc.set_compute_pipeline_state(&p.state_row);
+    enc.set_buffer(0, Some(&m.packed), 0);
+    enc.set_buffer(1, Some(&m.scales), 0);
+    enc.set_buffer(2, Some(&m.biases), 0);
+    enc.set_bytes(3, 4, &token as *const u32 as *const _);
+    enc.set_buffer(4, Some(y), y_byte_off);
+    let n_in = m.n_in as i32;
+    enc.set_bytes(5, 4, &n_in as *const i32 as *const _);
+    enc.dispatch_thread_groups(
+        MTLSize { width: 1, height: 1, depth: 1 },
+        MTLSize { width: 256, height: 1, depth: 1 },
+    );
+    Ok(())
+}
+
 fn dispatch_rows(enc: &ComputeCommandEncoderRef, n_out: u32) {
     let tg = MTLSize {
         width: TG_SIZE as NSUInteger,
@@ -877,6 +1112,144 @@ mod tests {
     }
 
     #[test]
+    fn gemm4_matches_serial_gemv() {
+        let n_out = 8usize;
+        let n_in = 256usize;
+        let mut packed = vec![0u32; n_out * (n_in / 4)];
+        for r in 0..n_out {
+            for i in 0..n_in {
+                let code = ((r * 13 + i * 5) % 251) as u32;
+                packed[r * (n_in / 4) + i / 4] |= code << (8 * (i % 4));
+            }
+        }
+        let groups = n_in / 64;
+        let scales: Vec<f32> = (0..n_out * groups)
+            .map(|i| 0.02 * ((i % 7) as f32) - 0.05)
+            .collect();
+        let biases: Vec<f32> = (0..n_out * groups)
+            .map(|i| 0.01 * ((i % 5) as f32) - 0.02)
+            .collect();
+        let m = QuantMatrix::upload(&packed, &scales, &biases, n_out, n_in).unwrap();
+        let p = pipe().unwrap();
+        let opts = MTLResourceOptions::StorageModeShared;
+        for batch in [1usize, 3, 4] {
+            let mut xs = Vec::new();
+            for b in 0..batch {
+                xs.extend((0..n_in).map(|i| ((i + b * 17) % 11) as f32 * 0.03 - 0.1));
+            }
+            let serial: Vec<Vec<f32>> = (0..batch)
+                .map(|b| m.gemv(&xs[b * n_in..(b + 1) * n_in]).unwrap())
+                .collect();
+            let x_b = p.device.new_buffer_with_data(
+                xs.as_ptr() as *const _,
+                (xs.len() * 4) as NSUInteger,
+                opts,
+            );
+            let y_b = p.device.new_buffer((batch * n_out * 4) as NSUInteger, opts);
+            let cb = p.queue.new_command_buffer();
+            let enc = cb.new_compute_command_encoder();
+            encode_gemm4(enc, &m, &x_b, &y_b, batch as u32).unwrap();
+            enc.end_encoding();
+            cb.commit();
+            cb.wait_until_completed();
+            let got = read_f32(&y_b, batch * n_out);
+            for b in 0..batch {
+                for r in 0..n_out {
+                    let g = got[b * n_out + r];
+                    let e = serial[b][r];
+                    assert!(
+                        (g - e).abs() == 0.0,
+                        "batch {batch} b{b} row {r}: gemm {g} vs gemv {e}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "MLP-shaped batch GEMM bandwidth lab"]
+    fn gemm4_bandwidth_mlp() {
+        let n_out = 17408usize;
+        let n_in = 5120usize;
+        let words = n_in / 4;
+        let groups = n_in / 64;
+        let packed = vec![0x01020304u32; n_out * words];
+        let scales = vec![0.01f32; n_out * groups];
+        let biases = vec![0.0f32; n_out * groups];
+        let m = QuantMatrix::upload(&packed, &scales, &biases, n_out, n_in).unwrap();
+        let p = pipe().unwrap();
+        let opts = MTLResourceOptions::StorageModeShared;
+        for batch in [1u32, 2, 4] {
+            let xs = vec![0.01f32; n_in * batch as usize];
+            let x_b = p.device.new_buffer_with_data(
+                xs.as_ptr() as *const _,
+                (xs.len() * 4) as NSUInteger,
+                opts,
+            );
+            let y_b = p.device.new_buffer((n_out * batch as usize * 4) as NSUInteger, opts);
+            let time = |gemm: bool| {
+                for _ in 0..2 {
+                    let cb = p.queue.new_command_buffer();
+                    let enc = cb.new_compute_command_encoder();
+                    if gemm {
+                        encode_gemm4(enc, &m, &x_b, &y_b, batch).unwrap();
+                    } else {
+                        for b in 0..batch {
+                            let x_off = (b as usize * n_in * 4) as NSUInteger;
+                            let y_off = (b as usize * n_out * 4) as NSUInteger;
+                            enc.set_compute_pipeline_state(&p.state);
+                            enc.set_buffer(0, Some(&m.packed), 0);
+                            enc.set_buffer(1, Some(&m.scales), 0);
+                            enc.set_buffer(2, Some(&m.biases), 0);
+                            enc.set_buffer(3, Some(&x_b), x_off);
+                            enc.set_buffer(4, Some(&y_b), y_off);
+                            let params = [m.n_in as i32, m.n_out as i32];
+                            enc.set_bytes(5, 8, params.as_ptr() as *const _);
+                            dispatch_rows(enc, m.n_out);
+                        }
+                    }
+                    enc.end_encoding();
+                    cb.commit();
+                    cb.wait_until_completed();
+                }
+                let n_dispatch = 20u32;
+                let cb = p.queue.new_command_buffer();
+                let enc = cb.new_compute_command_encoder();
+                for _ in 0..n_dispatch {
+                    if gemm {
+                        encode_gemm4(enc, &m, &x_b, &y_b, batch).unwrap();
+                    } else {
+                        for b in 0..batch {
+                            let x_off = (b as usize * n_in * 4) as NSUInteger;
+                            let y_off = (b as usize * n_out * 4) as NSUInteger;
+                            enc.set_compute_pipeline_state(&p.state);
+                            enc.set_buffer(0, Some(&m.packed), 0);
+                            enc.set_buffer(1, Some(&m.scales), 0);
+                            enc.set_buffer(2, Some(&m.biases), 0);
+                            enc.set_buffer(3, Some(&x_b), x_off);
+                            enc.set_buffer(4, Some(&y_b), y_off);
+                            let params = [m.n_in as i32, m.n_out as i32];
+                            enc.set_bytes(5, 8, params.as_ptr() as *const _);
+                            dispatch_rows(enc, m.n_out);
+                        }
+                    }
+                }
+                enc.end_encoding();
+                let t = std::time::Instant::now();
+                cb.commit();
+                cb.wait_until_completed();
+                t.elapsed().as_secs_f64() / n_dispatch as f64
+            };
+            let t_serial = time(false);
+            let t_gemm = time(true);
+            eprintln!(
+                "batch {batch}: serial {t_serial:.5}s  gemm {t_gemm:.5}s  speedup {:.2}x",
+                t_serial / t_gemm
+            );
+        }
+    }
+
+    #[test]
     fn gemv_bandwidth_mlp_shape() {
         let n_out = 17408usize;
         let n_in = 5120usize;
@@ -924,6 +1297,346 @@ mod tests {
         eprintln!(
             "mlp gemv {sec:.5}s  {gbs:.1} GB/s  encode {enc_s:.4}s ({:.1} us/dispatch)  gpu-wall {wall:.4}s",
             enc_s / n_dispatch as f64 * 1e6
+        );
+    }
+
+    /// 7-bit codes, little-endian bitstream, group 64 affine. Not the default:
+    /// requantizing the 8-bit checkpoint moves a GEMV by about 1%.
+    #[test]
+    #[ignore = "MLP-shaped bandwidth lab for a 7-bit unpack"]
+    fn gemv_q7_bandwidth() {
+        const Q7: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+constant int GROUP_SIZE = 64;
+constant int BLOCK_SIZE = 256;
+inline float bf16(ushort u) { return as_type<float>(uint(u) << 16); }
+inline float dotq(ulong v, float4 x0, float4 x1) {
+    float c0 = float(v & 127ul);
+    float c1 = float((v >> 7) & 127ul);
+    float c2 = float((v >> 14) & 127ul);
+    float c3 = float((v >> 21) & 127ul);
+    float c4 = float((v >> 28) & 127ul);
+    float c5 = float((v >> 35) & 127ul);
+    float c6 = float((v >> 42) & 127ul);
+    float c7 = float((v >> 49) & 127ul);
+    return fma(c0, x0[0], fma(c1, x0[1], fma(c2, x0[2], fma(c3, x0[3],
+        fma(c4, x1[0], fma(c5, x1[1], fma(c6, x1[2], c7 * x1[3])))))));
+}
+inline ulong load56(device const uchar* p) {
+    ulong v = ulong(p[0]);
+    v |= ulong(p[1]) << 8;
+    v |= ulong(p[2]) << 16;
+    v |= ulong(p[3]) << 24;
+    v |= ulong(p[4]) << 32;
+    v |= ulong(p[5]) << 40;
+    v |= ulong(p[6]) << 48;
+    return v;
+}
+inline ulong load56_tg(threadgroup const uint* w, uint byte) {
+    uint i = byte >> 2u;
+    uint sh = (byte & 3u) * 8u;
+    uint got = 32u - sh;
+    ulong v = ulong(w[i]) >> sh;
+    v |= ulong(w[i + 1u]) << got;
+    if (got + 32u < 56u) {
+        v |= ulong(w[i + 2u]) << (got + 32u);
+    }
+    return v;
+}
+struct GemvParams { int n_in; int n_out; };
+kernel void q7_bytes(
+    device const uchar* packed [[buffer(0)]],
+    device const ushort* scales [[buffer(1)]],
+    device const ushort* biases [[buffer(2)]],
+    device const float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    constant GemvParams& params [[buffer(5)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
+    int n_in = params.n_in;
+    int n_out = params.n_out;
+    int out_row = int(tid.y) * 8 + int(simd_gid) * 4;
+    if (out_row >= n_out) { return; }
+    int groups = n_in / GROUP_SIZE;
+    int row_bytes = n_in * 7 / 8;
+    device const ushort* sc = scales + out_row * groups + int(simd_lid) / 8;
+    device const ushort* bc = biases + out_row * groups + int(simd_lid) / 8;
+    device const float* xv = x + int(simd_lid) * 8;
+    float r0 = 0.0f, r1 = 0.0f, r2 = 0.0f, r3 = 0.0f;
+    for (int k = 0; k < n_in; k += BLOCK_SIZE) {
+        float4 x0 = *(device const float4*)xv;
+        float4 x1 = *(device const float4*)(xv + 4);
+        float xsum = x0[0] + x0[1] + x0[2] + x0[3] + x1[0] + x1[1] + x1[2] + x1[3];
+        int off = (k * 7) / 8 + int(simd_lid) * 7;
+        ulong v0 = load56(packed + out_row * row_bytes + off);
+        ulong v1 = load56(packed + (out_row + 1) * row_bytes + off);
+        ulong v2 = load56(packed + (out_row + 2) * row_bytes + off);
+        ulong v3 = load56(packed + (out_row + 3) * row_bytes + off);
+        r0 = fma(bf16(sc[0]), dotq(v0, x0, x1), fma(xsum, bf16(bc[0]), r0));
+        r1 = fma(bf16(sc[groups]), dotq(v1, x0, x1), fma(xsum, bf16(bc[groups]), r1));
+        r2 = fma(bf16(sc[2 * groups]), dotq(v2, x0, x1), fma(xsum, bf16(bc[2 * groups]), r2));
+        r3 = fma(bf16(sc[3 * groups]), dotq(v3, x0, x1), fma(xsum, bf16(bc[3 * groups]), r3));
+        sc += BLOCK_SIZE / GROUP_SIZE;
+        bc += BLOCK_SIZE / GROUP_SIZE;
+        xv += BLOCK_SIZE;
+    }
+    r0 = simd_sum(r0); r1 = simd_sum(r1); r2 = simd_sum(r2); r3 = simd_sum(r3);
+    if (simd_lid == 0u) {
+        y[out_row] = r0; y[out_row + 1] = r1; y[out_row + 2] = r2; y[out_row + 3] = r3;
+    }
+}
+kernel void q7_staged(
+    device const uchar* packed [[buffer(0)]],
+    device const ushort* scales [[buffer(1)]],
+    device const ushort* biases [[buffer(2)]],
+    device const float* x [[buffer(3)]],
+    device float* y [[buffer(4)]],
+    constant GemvParams& params [[buffer(5)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]
+) {
+    int n_in = params.n_in;
+    int n_out = params.n_out;
+    int out_row = int(tid.y) * 8 + int(simd_gid) * 4;
+    if (out_row >= n_out) { return; }
+    int groups = n_in / GROUP_SIZE;
+    int row_bytes = n_in * 7 / 8;
+    device const ushort* sc = scales + out_row * groups + int(simd_lid) / 8;
+    device const ushort* bc = biases + out_row * groups + int(simd_lid) / 8;
+    device const float* xv = x + int(simd_lid) * 8;
+    threadgroup uint tile[2][4][56];
+    float r0 = 0.0f, r1 = 0.0f, r2 = 0.0f, r3 = 0.0f;
+    for (int k = 0; k < n_in; k += BLOCK_SIZE) {
+        int block_off = (k * 7) / 8;
+        if (simd_lid < 28u) {
+            for (int r = 0; r < 4; ++r) {
+                device const uint2* src = (device const uint2*)(packed
+                    + (out_row + r) * row_bytes + block_off + int(simd_lid) * 8);
+                uint2 w = *src;
+                tile[simd_gid][r][simd_lid * 2u] = w.x;
+                tile[simd_gid][r][simd_lid * 2u + 1u] = w.y;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        float4 x0 = *(device const float4*)xv;
+        float4 x1 = *(device const float4*)(xv + 4);
+        float xsum = x0[0] + x0[1] + x0[2] + x0[3] + x1[0] + x1[1] + x1[2] + x1[3];
+        uint byte = simd_lid * 7u;
+        ulong v0 = load56_tg(tile[simd_gid][0], byte);
+        ulong v1 = load56_tg(tile[simd_gid][1], byte);
+        ulong v2 = load56_tg(tile[simd_gid][2], byte);
+        ulong v3 = load56_tg(tile[simd_gid][3], byte);
+        r0 = fma(bf16(sc[0]), dotq(v0, x0, x1), fma(xsum, bf16(bc[0]), r0));
+        r1 = fma(bf16(sc[groups]), dotq(v1, x0, x1), fma(xsum, bf16(bc[groups]), r1));
+        r2 = fma(bf16(sc[2 * groups]), dotq(v2, x0, x1), fma(xsum, bf16(bc[2 * groups]), r2));
+        r3 = fma(bf16(sc[3 * groups]), dotq(v3, x0, x1), fma(xsum, bf16(bc[3 * groups]), r3));
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        sc += BLOCK_SIZE / GROUP_SIZE;
+        bc += BLOCK_SIZE / GROUP_SIZE;
+        xv += BLOCK_SIZE;
+    }
+    r0 = simd_sum(r0); r1 = simd_sum(r1); r2 = simd_sum(r2); r3 = simd_sum(r3);
+    if (simd_lid == 0u) {
+        y[out_row] = r0; y[out_row + 1] = r1; y[out_row + 2] = r2; y[out_row + 3] = r3;
+    }
+}
+"#;
+
+        fn pack7(n_out: usize, n_in: usize, code_at: impl Fn(usize, usize) -> u8) -> Vec<u8> {
+            let row_bytes = n_in * 7 / 8;
+            let mut dst = vec![0u8; n_out * row_bytes];
+            for r in 0..n_out {
+                let mut acc = 0u64;
+                let mut nbits = 0u32;
+                let mut at = r * row_bytes;
+                for i in 0..n_in {
+                    acc |= u64::from(code_at(r, i) & 127) << nbits;
+                    nbits += 7;
+                    while nbits >= 8 {
+                        dst[at] = (acc & 255) as u8;
+                        at += 1;
+                        acc >>= 8;
+                        nbits -= 8;
+                    }
+                }
+                if nbits > 0 {
+                    dst[at] = (acc & 255) as u8;
+                }
+            }
+            dst
+        }
+
+        let dev = Device::system_default().unwrap();
+        let lib = dev
+            .new_library_with_source(Q7, &metal::CompileOptions::new())
+            .expect("q7 metal");
+        let mk = |name: &str| {
+            let f = lib.get_function(name, None).unwrap();
+            dev.new_compute_pipeline_state_with_function(&f).unwrap()
+        };
+        let q7_bytes = mk("q7_bytes");
+        let q7_staged = mk("q7_staged");
+        let queue = dev.new_command_queue();
+        let private = MTLResourceOptions::StorageModePrivate
+            | MTLResourceOptions::HazardTrackingModeUntracked;
+        let shared = MTLResourceOptions::StorageModeShared;
+
+        let check_out = 8usize;
+        let check_in = 256usize;
+        let check_groups = check_in / 64;
+        let packed = pack7(check_out, check_in, |r, i| ((r * 3 + i) % 127) as u8);
+        let scales = vec![0.5f32; check_out * check_groups];
+        let biases = vec![-1.0f32; check_out * check_groups];
+        let x = vec![1.0f32; check_in];
+        let scales_h: Vec<u16> = scales.iter().copied().map(f32_to_bf16).collect();
+        let biases_h: Vec<u16> = biases.iter().copied().map(f32_to_bf16).collect();
+        let y = dev.new_buffer((check_out * 4) as NSUInteger, shared);
+        let x_b = dev.new_buffer_with_data(x.as_ptr() as *const _, (x.len() * 4) as _, shared);
+        let p_b = dev.new_buffer_with_data(packed.as_ptr() as *const _, packed.len() as _, shared);
+        let s_b = dev.new_buffer_with_data(scales_h.as_ptr() as *const _, (scales_h.len() * 2) as _, shared);
+        let b_b = dev.new_buffer_with_data(biases_h.as_ptr() as *const _, (biases_h.len() * 2) as _, shared);
+        let cb = queue.new_command_buffer();
+        let enc = cb.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&q7_staged);
+        enc.set_buffer(0, Some(&p_b), 0);
+        enc.set_buffer(1, Some(&s_b), 0);
+        enc.set_buffer(2, Some(&b_b), 0);
+        enc.set_buffer(3, Some(&x_b), 0);
+        enc.set_buffer(4, Some(&y), 0);
+        let params = [check_in as i32, check_out as i32];
+        enc.set_bytes(5, 8, params.as_ptr() as *const _);
+        enc.dispatch_thread_groups(
+            MTLSize { width: 1, height: 1, depth: 1 },
+            MTLSize { width: 64, height: 1, depth: 1 },
+        );
+        enc.end_encoding();
+        cb.commit();
+        cb.wait_until_completed();
+        let got = read_f32(&y, check_out);
+        for r in 0..check_out {
+            let mut expect = 0.0f32;
+            for i in 0..check_in {
+                let code = ((r * 3 + i) % 127) as f32;
+                expect += (-1.0 + 0.5 * code) * 1.0;
+            }
+            assert!((got[r] - expect).abs() < 1e-2, "q7 row {r}: {} vs {expect}", got[r]);
+        }
+
+        let n_out = 17408usize;
+        let n_in = 5120usize;
+        let groups = n_in / 64;
+        let big = pack7(n_out, n_in, |_, i| (i % 127) as u8);
+        let scales = vec![0.01f32; n_out * groups];
+        let biases = vec![0.0f32; n_out * groups];
+        let x = vec![0.01f32; n_in];
+        let scales_h: Vec<u16> = scales.iter().copied().map(f32_to_bf16).collect();
+        let biases_h: Vec<u16> = biases.iter().copied().map(f32_to_bf16).collect();
+        let stage = |bytes: &[u8]| {
+            let src = dev.new_buffer_with_data(bytes.as_ptr() as *const _, bytes.len() as _, shared);
+            let dst = dev.new_buffer(src.length(), private);
+            let cb = queue.new_command_buffer();
+            let blit = cb.new_blit_command_encoder();
+            blit.copy_from_buffer(&src, 0, &dst, 0, src.length());
+            blit.end_encoding();
+            cb.commit();
+            cb.wait_until_completed();
+            dst
+        };
+        let packed_b = stage(&big);
+        let scales_bytes = unsafe {
+            std::slice::from_raw_parts(scales_h.as_ptr() as *const u8, scales_h.len() * 2)
+        };
+        let biases_bytes = unsafe {
+            std::slice::from_raw_parts(biases_h.as_ptr() as *const u8, biases_h.len() * 2)
+        };
+        let scales_b = stage(scales_bytes);
+        let biases_b = stage(biases_bytes);
+        let x_b = dev.new_buffer_with_data(x.as_ptr() as *const _, (x.len() * 4) as _, shared);
+        let y_b = dev.new_buffer((n_out * 4) as NSUInteger, shared);
+        let time_q7 = |state: &ComputePipelineState, tag: &str| {
+            for _ in 0..3 {
+                let cb = queue.new_command_buffer();
+                let enc = cb.new_compute_command_encoder();
+                enc.set_compute_pipeline_state(state);
+                enc.set_buffer(0, Some(&packed_b), 0);
+                enc.set_buffer(1, Some(&scales_b), 0);
+                enc.set_buffer(2, Some(&biases_b), 0);
+                enc.set_buffer(3, Some(&x_b), 0);
+                enc.set_buffer(4, Some(&y_b), 0);
+                let params = [n_in as i32, n_out as i32];
+                enc.set_bytes(5, 8, params.as_ptr() as *const _);
+                enc.dispatch_thread_groups(
+                    MTLSize { width: 1, height: (n_out / 8) as NSUInteger, depth: 1 },
+                    MTLSize { width: 64, height: 1, depth: 1 },
+                );
+                enc.end_encoding();
+                cb.commit();
+                cb.wait_until_completed();
+            }
+            let n_dispatch = 40u32;
+            let cb = queue.new_command_buffer();
+            let enc = cb.new_compute_command_encoder();
+            for _ in 0..n_dispatch {
+                enc.set_compute_pipeline_state(state);
+                enc.set_buffer(0, Some(&packed_b), 0);
+                enc.set_buffer(1, Some(&scales_b), 0);
+                enc.set_buffer(2, Some(&biases_b), 0);
+                enc.set_buffer(3, Some(&x_b), 0);
+                enc.set_buffer(4, Some(&y_b), 0);
+                let params = [n_in as i32, n_out as i32];
+                enc.set_bytes(5, 8, params.as_ptr() as *const _);
+                enc.dispatch_thread_groups(
+                    MTLSize { width: 1, height: (n_out / 8) as NSUInteger, depth: 1 },
+                    MTLSize { width: 64, height: 1, depth: 1 },
+                );
+            }
+            enc.end_encoding();
+            let t = std::time::Instant::now();
+            cb.commit();
+            cb.wait_until_completed();
+            let sec = t.elapsed().as_secs_f64() / n_dispatch as f64;
+            let bytes = (n_out * n_in * 7 / 8) as f64;
+            eprintln!("{tag} {sec:.5}s  {:.1} GB/s", bytes / 1e9 / sec);
+            sec
+        };
+        let t_bytes = time_q7(&q7_bytes, "q7-byte");
+        let t_staged = time_q7(&q7_staged, "q7-staged");
+        let m = QuantMatrix::upload(
+            &vec![0x01020304u32; n_out * (n_in / 4)],
+            &scales,
+            &biases,
+            n_out,
+            n_in,
+        )
+        .unwrap();
+        let p = pipe().unwrap();
+        for _ in 0..3 {
+            let cb = p.queue.new_command_buffer();
+            let enc = cb.new_compute_command_encoder();
+            encode_gemv(enc, &p.state, &m, &x_b, &y_b);
+            enc.end_encoding();
+            cb.commit();
+            cb.wait_until_completed();
+        }
+        let n_dispatch = 40u32;
+        let cb = p.queue.new_command_buffer();
+        let enc = cb.new_compute_command_encoder();
+        for _ in 0..n_dispatch {
+            encode_gemv(enc, &p.state, &m, &x_b, &y_b);
+        }
+        enc.end_encoding();
+        let t = std::time::Instant::now();
+        cb.commit();
+        cb.wait_until_completed();
+        let t8 = t.elapsed().as_secs_f64() / n_dispatch as f64;
+        eprintln!(
+            "q8 {t8:.5}s  q7/q8 byte {:.3}  staged {:.3}",
+            t_bytes / t8,
+            t_staged / t8
         );
     }
 
