@@ -14,6 +14,7 @@ use anyhow::Result;
 use pagoda::Tokenizer;
 use pagoda_hf::{CandleModel, HfTokenizer, Qwen35};
 
+#[cfg(feature = "metal")]
 fn fill_prefix(model: &Qwen35, cache: &mut pagoda_hf::Qwen35Cache, ids: &[u32]) -> Result<()> {
     for &id in ids {
         let _ = model.forward(&[id], cache)?;
@@ -21,6 +22,7 @@ fn fill_prefix(model: &Qwen35, cache: &mut pagoda_hf::Qwen35Cache, ids: &[u32]) 
     Ok(())
 }
 
+#[cfg(feature = "metal")]
 fn run_compare(model: &Qwen35, tokenizer: &HfTokenizer, prompt: &str) -> Result<()> {
     let ids = tokenizer.encode(prompt);
     anyhow::ensure!(!ids.is_empty(), "empty prompt");
@@ -120,8 +122,15 @@ fn main() -> Result<()> {
     let model = Qwen35::load(&model_dir, device)?;
     let tokenizer = HfTokenizer::from_file(format!("{model_dir}/tokenizer.json"))?;
     if compare {
-        run_compare(&model, &tokenizer, &prompt)?;
-        return Ok(());
+        #[cfg(feature = "metal")]
+        {
+            run_compare(&model, &tokenizer, &prompt)?;
+            return Ok(());
+        }
+        #[cfg(not(feature = "metal"))]
+        {
+            anyhow::bail!("--compare needs --features metal (forward_verify is Metal-only)");
+        }
     }
     let ids = tokenizer.encode(&prompt);
     eprintln!("==> prompt tokens {}", ids.len());
