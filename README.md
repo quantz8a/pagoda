@@ -67,12 +67,13 @@ wire_api = "responses"
 requires_openai_auth = false
 ```
 
-`model_catalog_json` 里要有这个 slug。改完退出 Codex++ 再开。服务把 `instructions` 和 `input` 收成 Qwen 聊天模板，工具调用按权重目录里的 `chat_template.jinja` 写成 `<tool_call>`，再翻成 Responses 的 `function_call`。生成提示里的思考块是合上的。响应里 `temperature` 记 0，因为这条路径是贪心。下一轮 token 若是上一轮的延长，只喂新增后缀；对不上就整段重喂，日志写 `prefix miss`。
+`model_catalog_json` 里要有这个 slug。改完退出 Codex++ 再开。服务把 `instructions` 和 `input` 收成 Qwen 聊天模板，工具调用按权重目录里的 `chat_template.jinja` 写成 `<tool_call>`，再翻成 Responses 的 `function_call`。CoT 默认打开（未传 `reasoning.effort` 也开）；`none` / `off` / `minimal` 或 `enable_thinking: false` 合上。响应里 `temperature` 记 0，因为这条路径是贪心。下一轮 token 若是上一轮的延长，只喂新增后缀；对不上就整段重喂，日志写 `prefix miss`。
 
 | 项 | 这版 |
 | --- | --- |
-| 提示 | 超过 16384 token 返回 400 |
-| 生成 | `max_output_tokens`，再被帽在 4096 |
+| 提示 | 交互窗与模型一致，上限 262144；`prompt + max_output` 超窗返回 400。长提示 prefill 约 50 tok/s，首字前可能等很久 |
+| 生成 | `max_output_tokens`，再被帽在 32768 |
+| CoT | 默认开；`low` / `medium` / `high` 开；`none` / `off` / `minimal` 关。流式正文仍等 `</think>`，思考进最终 `reasoning` 项 |
 | 并发 | 一个请求 |
 | 图像 | 换成文本 `[image]` |
 | `/v1/responses/compact` | 404 |

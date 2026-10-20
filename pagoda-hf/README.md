@@ -17,13 +17,27 @@ the toy n-gram + byte stand-ins with real artifacts:
 
 ## Qwen3.8 27B（文本）
 
-MLX 目录，8-bit affine。只跑 `language_model`，不跑视觉塔。和 mlx-serve 的贪心续写对过 `Hi` → `, I'm a`。`PAGODA_DEVICE=metal` 把反量化后的 F16 权重留在 GPU 上；第一次约 86 秒（上传），第 4 个 token 0.3 秒。
+MLX 目录，8-bit affine。只跑 `language_model`，不跑视觉塔。配置架构字段是 `qwen3_5`（源码 `Qwen35`），发布名是 Qwen3.8。和 mlx-serve 的贪心续写对过。
 
 ```bash
 PAGODA_DEVICE=metal cargo run --release --features metal --example qwen3_8 -- \
   --model ~/.mlx-serve/models/mlx-community/Qwen3.8-27B-8bit \
   --prompt "Hi" --max-tokens 4
 ```
+
+### `qwen3_server`（Codex / Hermes）
+
+```bash
+PAGODA_DEVICE=metal cargo build --release --features metal --bin qwen3_server
+PAGODA_DEVICE=metal ./target/release/qwen3_server \
+  --model ~/.mlx-serve/models/mlx-community/Qwen3.8-27B-8bit \
+  --port 8000
+```
+
+- 交互窗与模型上限一致：**262144**；`prompt + max_output` 超窗返回 400。
+- CoT 默认开；`reasoning.effort` 为 `none` / `off` / `minimal` 时合上。
+- 路由：`POST /v1/responses`、`/v1/chat/completions`、`/v1/completions`；并发 1。
+- 生成走 `pagoda::Engine` + `QwenEngine`（真实 KV 在 `QwenSession`）。设计见 [`../pagoda/docs/INFERENCE-DESIGN.md`](../pagoda/docs/INFERENCE-DESIGN.md)。
 
 ## Apple Silicon
 

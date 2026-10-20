@@ -286,6 +286,34 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
         self.radix.cache_hit_rate()
     }
 
+    /// Generate for a single request, invoking `sink` with each new token piece.
+    /// The sink returns false to stop after the current token.
+    pub fn generate_streaming(
+        &mut self,
+        req: &WriteRequest,
+        sink: &mut dyn FnMut(usize, &str) -> bool,
+    ) -> GenerationOutput {
+        self.sampler.seed(req.sampling.seed);
+        let mut waiting = VecDeque::new();
+        let outputs = Vec::new();
+        match self.admit(req) {
+            Ok(seq) => waiting.push_back(seq),
+            Err(rejected) => return rejected,
+        }
+        let mut stop = false;
+        let mut wrapped = |id: usize, piece: &str| {
+            if stop {
+                return;
+            }
+            if !sink(id, piece) {
+                stop = true;
+            }
+        };
+        self.drain(waiting, outputs, Some(&mut wrapped))
+            .pop()
+            .expect("generate_streaming returned no output")
+    }
+
     /// Generate for a single request. Reseeds the sampler from the request so
     /// output is reproducible per request.
     pub fn generate(&mut self, req: &WriteRequest) -> GenerationOutput {
@@ -947,7 +975,11 @@ impl<M: ModelEngine, T: Tokenizer> Engine<M, T> {
     /// references to the shared blocks. Returns a not-yet-prefilled sequence for
     /// accepted requests, or a `Rejected` [`GenerationOutput`] otherwise.
     fn admit(&mut self, req: &WriteRequest) -> Result<Seq, GenerationOutput> {
-        let prompt = self.tokenizer.encode(&req.text);
+        let prompt = if let Some(ids) = &req.prompt_tokens {
+            ids.clone()
+        } else {
+            self.tokenizer.encode(&req.text)
+        };
         let prompt_len = prompt.len();
         let max_new = req.sampling.max_tokens;
 

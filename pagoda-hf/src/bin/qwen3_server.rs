@@ -16,8 +16,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use pagoda::server::{read_http_request, write_http_response, HttpResponse};
-use pagoda::Tokenizer;
-use pagoda_hf::{CandleModel, HfTokenizer, Qwen35, Qwen35Cache};
+use pagoda::{Engine, EngineConfig, SamplingParams, Tokenizer, WriteRequest};
+use pagoda_hf::{CandleModel, HfTokenizer, Qwen35, QwenEngine};
 use serde_json::{json, Value};
 
 const TOOL_GUIDE: &str = "\
@@ -38,6 +38,10 @@ This is the value for the second parameter\nthat can span\nmultiple lines\n</par
 /// `text_config.max_position_embeddings` for this Qwen3.8 checkpoint.
 const MAX_CONTEXT_TOKENS: usize = 262144;
 const MAX_OUTPUT_TOKENS: usize = 32768;
+/// Feed up to the model window. Prefill is still ~50 tok/s and streams nothing
+/// until the prompt is consumed, so a cold multi-k prompt can sit silent for
+/// minutes; that is the trade for keeping system / tool text in context.
+const INTERACTIVE_PROMPT_TOKENS: usize = MAX_CONTEXT_TOKENS;
 
 struct Args {
     model_dir: String,
@@ -59,7 +63,6 @@ struct Msg {
 
 struct Resident {
     ids: Vec<u32>,
-    cache: Qwen35Cache,
 }
 
 fn parse_args() -> Args {
@@ -222,7 +225,11 @@ fn reasoning_enabled(req: &Value) -> bool {
         .and_then(Value::as_str)
         .or_else(|| req.get("reasoning_effort").and_then(Value::as_str));
     match effort {
-        Some("none" | "minimal") => false,
+        // Explicit off. Codex++ sometimes sends `minimal` for the same intent.
+        Some("none") | Some("off") | Some("minimal") => false,
+        // Open `<think>` for low/medium/high (and any other effort). Streamed
+        // answer text still waits for `</think>`; reasoning lands in the final
+        // response `reasoning` item.
         Some(_) => true,
         // Qwen3.8 is a thinking model. Codex++ omits the field on some turns;
         // leave the think block open unless the client explicitly turns it off.
@@ -420,6 +427,54 @@ fn parse_generation(raw: &str) -> Parsed {
     }
 }
 
+fn rfind_ids(hay: &[u32], needle: &[u32]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    let mut i = hay.len() - needle.len();
+    loop {
+        if &hay[i..i + needle.len()] == needle {
+            return Some(i);
+        }
+        if i == 0 {
+            return None;
+        }
+        i -= 1;
+    }
+}
+
+fn take_tail(ids: Vec<u32>, budget: usize) -> (Vec<u32>, usize) {
+    if budget == 0 || ids.len() <= budget {
+        return (ids, 0);
+    }
+    let dropped = ids.len() - budget;
+    let tail = ids[dropped..].to_vec();
+    (tail, dropped)
+}
+
+fn fit_encoded(run: &ArgsRun<'_>, encoded: Vec<u32>) -> Vec<u32> {
+    if let Some(prev) = run.resident.as_ref() {
+        if let Some(at) = rfind_ids(&encoded, &prev.ids) {
+            let suffix = encoded.len() - at - prev.ids.len();
+            if suffix > 0 && suffix <= INTERACTIVE_PROMPT_TOKENS {
+                eprintln!(
+                    "==> extend cached {} plus {suffix} new tokens",
+                    prev.ids.len()
+                );
+                return encoded[at..].to_vec();
+            }
+        }
+    }
+    let (ids, dropped) = take_tail(encoded, INTERACTIVE_PROMPT_TOKENS);
+    if dropped > 0 {
+        eprintln!(
+            "==> trim {dropped} older prompt tokens; feeding last {}",
+            ids.len()
+        );
+    }
+    ids
+}
+
 fn context_limit(prompt_tokens: usize, max_output: usize) -> Result<()> {
     if prompt_tokens.saturating_add(max_output) > MAX_CONTEXT_TOKENS {
         bail!(
@@ -429,91 +484,47 @@ fn context_limit(prompt_tokens: usize, max_output: usize) -> Result<()> {
     Ok(())
 }
 
-fn feed_prefix(model: &Qwen35, cache: &mut Qwen35Cache, ids: &[u32], verify: bool) -> Result<()> {
-    let mut i = 0;
-    #[cfg(feature = "metal")]
-    if verify {
-        while i + 4 <= ids.len() {
-            model.forward_verify(&ids[i..i + 4], cache)?;
-            i += 4;
-            if i % 256 == 0 {
-                eprintln!("==> prefill {i}/{}", ids.len());
-            }
-        }
-    }
-    #[cfg(not(feature = "metal"))]
-    let _ = verify;
-    while i < ids.len() {
-        model.forward_greedy(&ids[i..i + 1], cache)?;
-        i += 1;
-        if i % 256 == 0 {
-            eprintln!("==> prefill {i}/{}", ids.len());
-        }
-    }
-    Ok(())
-}
-
 fn generate(
-    model: &Qwen35,
-    tokenizer: &HfTokenizer,
+    engine: &mut Engine<QwenEngine, HfTokenizer>,
     resident: &mut Option<Resident>,
     prompt_ids: &[u32],
     max_tokens: usize,
-    verify: bool,
     mut on_text: impl FnMut(&str) -> bool,
 ) -> Result<Vec<u32>> {
     if prompt_ids.is_empty() {
         bail!("empty prompt");
     }
-    let reuse = resident
-        .as_ref()
-        .is_some_and(|prev| !prev.ids.is_empty() && prompt_ids.starts_with(&prev.ids) && prompt_ids.len() > prev.ids.len());
-    if !reuse {
-        if resident.as_ref().is_some_and(|prev| !prev.ids.is_empty()) {
-            let n = resident.as_ref().map(|p| p.ids.len()).unwrap_or(0);
-            eprintln!("==> prefix miss (cached {n} prompt {})", prompt_ids.len());
-        }
-        *resident = Some(Resident {
-            ids: Vec::new(),
-            cache: model.new_cache(),
-        });
-    }
-    let prev = resident.as_mut().unwrap();
-    let cached = if prompt_ids.starts_with(&prev.ids) {
-        prev.ids.len()
-    } else {
-        0
+    let req = WriteRequest {
+        text: String::new(),
+        sampling: SamplingParams {
+            max_tokens,
+            temperature: 0.0,
+            stop: vec!["<|im_end|>".into(), "<|endoftext|>".into()],
+            stop_token_ids: vec![248046],
+            ..SamplingParams::default()
+        },
+        prompt_tokens: Some(prompt_ids.to_vec()),
     };
-    let suffix = &prompt_ids[cached..];
-    if suffix.is_empty() {
-        bail!("nothing new to feed");
-    }
-    if suffix.len() > 1 {
-        eprintln!("==> feed {} new prompt tokens", suffix.len() - 1);
-        feed_prefix(model, &mut prev.cache, &suffix[..suffix.len() - 1], verify)?;
-    }
-    let mut next = *suffix.last().unwrap();
-    let mut produced = Vec::new();
-    let stop = model.eos();
-    for _ in 0..max_tokens {
-        let (token, _) = model.forward_greedy(&[next], &mut prev.cache)?;
-        if token == stop || token == 248046 {
-            break;
+    let mut acc = String::new();
+    let mut stop = false;
+    let out = engine.generate_streaming(&req, &mut |_id, piece| {
+        if stop {
+            return false;
         }
-        let piece = tokenizer.decode(&[token]);
-        if piece.contains("<|im_end|>") || piece.contains("<|endoftext|>") {
-            break;
+        acc.push_str(piece);
+        if !on_text(&acc) {
+            stop = true;
+            return false;
         }
-        produced.push(token);
-        let decoded = tokenizer.decode(&produced);
-        if !on_text(&decoded) {
-            break;
-        }
-        next = token;
+        true
+    });
+    if let Some(reason) = out.rejection {
+        bail!("rejected: {reason:?}");
     }
-    prev.ids.clear();
-    prev.ids.extend_from_slice(prompt_ids);
-    prev.ids.extend_from_slice(&produced);
+    let produced = out.output_token_ids;
+    let mut ids = prompt_ids.to_vec();
+    ids.extend_from_slice(&produced);
+    *resident = Some(Resident { ids });
     Ok(produced)
 }
 
@@ -614,14 +625,14 @@ fn write_chunk(stream: &mut TcpStream, payload: &[u8]) -> std::io::Result<()> {
 
 fn sse(stream: &mut TcpStream, event: &str, data: &Value) -> std::io::Result<()> {
     let payload = format!("event: {event}\ndata: {data}\n\n");
-    write_chunk(stream, payload.as_bytes())
+    write_chunk(stream, payload.as_bytes())?;
+    stream.flush()
 }
 
 struct ArgsRun<'a> {
-    model: &'a Qwen35,
+    engine: &'a mut Engine<QwenEngine, HfTokenizer>,
     tokenizer: &'a HfTokenizer,
     resident: &'a mut Option<Resident>,
-    verify: bool,
     model_id: &'a str,
 }
 
@@ -680,22 +691,92 @@ fn complete_text(
     prompt: &str,
     max_tokens: usize,
 ) -> Result<(Vec<u32>, Vec<u32>, String)> {
-    let prompt_ids = run.tokenizer.encode(prompt);
+    let prompt_ids = fit_encoded(run, run.tokenizer.encode(prompt));
     if prompt_ids.is_empty() {
         bail!("empty prompt");
     }
     context_limit(prompt_ids.len(), max_tokens)?;
     let produced = generate(
-        run.model,
-        run.tokenizer,
+        run.engine,
         run.resident,
         &prompt_ids,
         max_tokens,
-        run.verify,
         |_| true,
     )?;
     let text = run.tokenizer.decode(&produced);
     Ok((prompt_ids, produced, text))
+}
+
+fn chat_stream(
+    stream: &mut TcpStream,
+    run: &mut ArgsRun<'_>,
+    prompt: &str,
+    max_tokens: usize,
+    model: &str,
+) -> Result<()> {
+    let prompt_ids = fit_encoded(run, run.tokenizer.encode(prompt));
+    if prompt_ids.is_empty() {
+        write_http_response(stream, &HttpResponse::json(400, r#"{"error":{"message":"empty prompt"}}"#))?;
+        return Ok(());
+    }
+    if let Err(e) = context_limit(prompt_ids.len(), max_tokens) {
+        let err = json!({"error": {"message": e.to_string()}}).to_string();
+        write_http_response(stream, &HttpResponse::json(400, &err))?;
+        return Ok(());
+    }
+    let id = format!("chatcmpl_{}", now_secs());
+    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+    stream.write_all(head.as_bytes())?;
+    let role = json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": now_secs(),
+        "model": model,
+        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": null}]
+    });
+    write_chunk(stream, format!("data: {role}\n\n").as_bytes())?;
+    stream.flush()?;
+    let mut sent = String::new();
+    let produced = generate(
+        run.engine,
+        run.resident,
+        &prompt_ids,
+        max_tokens,
+        |decoded| {
+            if decoded.len() > sent.len() && decoded.starts_with(&sent) {
+                let delta = &decoded[sent.len()..];
+                let chunk = json!({
+                    "id": id,
+                    "object": "chat.completion.chunk",
+                    "created": now_secs(),
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {"content": delta}, "finish_reason": null}]
+                });
+                if write_chunk(stream, format!("data: {chunk}\n\n").as_bytes()).is_err() {
+                    return false;
+                }
+                let _ = stream.flush();
+                sent = decoded.to_string();
+            }
+            true
+        },
+    );
+    let finish = match &produced {
+        Ok(tokens) if tokens.len() >= max_tokens => "length",
+        Ok(_) => "stop",
+        Err(_) => "stop",
+    };
+    let done = json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "created": now_secs(),
+        "model": model,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]
+    });
+    let _ = write_chunk(stream, format!("data: {done}\n\n").as_bytes());
+    let _ = write_chunk(stream, b"data: [DONE]\n\n");
+    let _ = write_chunk(stream, b"");
+    Ok(())
 }
 
 fn chat_complete(stream: &mut TcpStream, run: &mut ArgsRun<'_>, body: &str) -> Result<()> {
@@ -719,6 +800,9 @@ fn chat_complete(stream: &mut TcpStream, run: &mut ArgsRun<'_>, body: &str) -> R
         .get("model")
         .and_then(Value::as_str)
         .unwrap_or(run.model_id);
+    if req.get("stream").and_then(Value::as_bool).unwrap_or(false) {
+        return chat_stream(stream, run, &prompt, max_tokens, model);
+    }
     let (prompt_ids, produced, text) = match complete_text(run, &prompt, max_tokens) {
         Ok(v) => v,
         Err(e) => {
@@ -800,7 +884,7 @@ fn respond(stream: &mut TcpStream, run: &mut ArgsRun<'_>, body: &str) -> Result<
     };
     let think = reasoning_enabled(&req);
     let prompt = render(&messages, &tools, think);
-    let prompt_ids = run.tokenizer.encode(&prompt);
+    let prompt_ids = fit_encoded(run, run.tokenizer.encode(&prompt));
     if prompt_ids.is_empty() {
         write_http_response(stream, &HttpResponse::json(400, r#"{"error":"empty prompt"}"#))?;
         return Ok(());
@@ -838,12 +922,10 @@ fn respond(stream: &mut TcpStream, run: &mut ArgsRun<'_>, body: &str) -> Result<
 
     if !stream_wanted {
         let produced = generate(
-            run.model,
-            run.tokenizer,
+            run.engine,
             run.resident,
             &prompt_ids,
             max_tokens,
-            run.verify,
             |_| true,
         )?;
         let raw = run.tokenizer.decode(&produced);
@@ -889,12 +971,10 @@ fn respond(stream: &mut TcpStream, run: &mut ArgsRun<'_>, body: &str) -> Result<
     let msg_id = format!("msg_{}", now_secs());
     let mut opened = false;
     let gen = generate(
-        run.model,
-        run.tokenizer,
+        run.engine,
         run.resident,
         &prompt_ids,
         max_tokens,
-        run.verify,
         |decoded| {
             let (visible, tool) = split_visible(decoded);
             if tool {
@@ -1046,26 +1126,42 @@ fn main() -> Result<()> {
     eprintln!("==> device {device:?} verify_prefill {verify}");
     eprintln!("==> load {}", args.model_dir);
     let tokenizer = HfTokenizer::from_file(format!("{}/tokenizer.json", args.model_dir))?;
-    let model = Qwen35::load(&args.model_dir, device)?;
+    let model = std::sync::Arc::new(Qwen35::load(&args.model_dir, device)?);
     eprintln!("==> warmup");
     {
         let mut cache = model.new_cache();
         let _ = model.forward_greedy(&[tokenizer.encode("Hi")[0]], &mut cache)?;
     }
+    let engine_tokenizer = HfTokenizer::from_file(format!("{}/tokenizer.json", args.model_dir))?;
+    let mut engine = Engine::new(
+        engine_tokenizer,
+        QwenEngine::new(model),
+        EngineConfig {
+            // Bookkeeping pages for token ids (real KV lives in QwenSession).
+            // Need ceiling(MAX_CONTEXT / block_size) to admit a full window.
+            num_kv_blocks: MAX_CONTEXT_TOKENS.div_ceil(16),
+            block_size: 16,
+            max_running_requests: 1,
+            max_prefill_tokens_per_step: 256,
+            max_total_tokens: MAX_CONTEXT_TOKENS,
+            max_waiting_requests: 4,
+            ..EngineConfig::default()
+        },
+    );
+    let _ = verify;
     let mut resident = None;
     let listener = TcpListener::bind(format!("{}:{}", args.addr, args.port))?;
     eprintln!(
-        "qwen3_server listening on http://{}:{} model {}",
+        "qwen3_server listening on http://{}:{} model {} (engine)",
         args.addr, args.port, args.model_id
     );
     for conn in listener.incoming() {
         let mut stream = conn?;
         let _ = stream.set_nodelay(true);
         let mut run = ArgsRun {
-            model: &model,
+            engine: &mut engine,
             tokenizer: &tokenizer,
             resident: &mut resident,
-            verify,
             model_id: &args.model_id,
         };
         if let Err(e) = handle(&mut stream, &mut run) {
@@ -1092,6 +1188,48 @@ mod tests {
         let open = render(&messages, &[], true);
         assert!(open.ends_with("<|im_start|>assistant\n<think>\n"));
         assert!(!open.ends_with("</think>\n\n"));
+    }
+
+    #[test]
+    fn reasoning_effort_opens_cot_except_none() {
+        // Omitted effort stays open: Codex++ drops the field on some turns.
+        assert!(reasoning_enabled(&json!({})));
+        assert!(!reasoning_enabled(&json!({"reasoning": {"effort": "none"}})));
+        assert!(!reasoning_enabled(&json!({"reasoning_effort": "off"})));
+        assert!(!reasoning_enabled(&json!({"reasoning": {"effort": "minimal"}})));
+        assert!(reasoning_enabled(&json!({"reasoning": {"effort": "low"}})));
+        assert!(reasoning_enabled(&json!({"reasoning": {"effort": "medium"}})));
+        assert!(reasoning_enabled(&json!({"reasoning": {"effort": "high"}})));
+        assert!(reasoning_enabled(&json!({"enable_thinking": true})));
+        assert!(!reasoning_enabled(&json!({"enable_thinking": false, "reasoning": {"effort": "high"}})));
+    }
+
+    #[test]
+    fn fit_encoded_keeps_full_prompt_within_window() {
+        let ids: Vec<u32> = (0..512).collect();
+        let (tail, dropped) = take_tail(ids, INTERACTIVE_PROMPT_TOKENS);
+        assert_eq!(dropped, 0);
+        assert_eq!(tail.len(), 512);
+        assert_eq!(INTERACTIVE_PROMPT_TOKENS, MAX_CONTEXT_TOKENS);
+    }
+
+    #[test]
+    fn rfind_ids_picks_the_latest_copy() {
+        let hay = [1, 2, 9, 9, 1, 2, 3];
+        assert_eq!(rfind_ids(&hay, &[1, 2]), Some(4));
+        assert_eq!(rfind_ids(&hay, &[9, 9, 1]), Some(2));
+        assert_eq!(rfind_ids(&hay, &[7]), None);
+    }
+
+    #[test]
+    fn take_tail_keeps_the_latest_tokens() {
+        let ids: Vec<u32> = (0..10).collect();
+        let (tail, dropped) = take_tail(ids.clone(), 4);
+        assert_eq!(dropped, 6);
+        assert_eq!(tail, vec![6, 7, 8, 9]);
+        let (same, none) = take_tail(ids, 10);
+        assert_eq!(none, 0);
+        assert_eq!(same.len(), 10);
     }
 
     #[test]

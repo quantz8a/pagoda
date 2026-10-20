@@ -114,9 +114,13 @@ struct Affine {
 }
 
 struct CacheLayer {
+    /// `true` for full attention, `false` for gated-delta linear attention.
+    full: bool,
     /// Full-attention K/V, `[len, kv_heads, head_dim]`.
     k: Vec<f32>,
     v: Vec<f32>,
+    kv_heads: usize,
+    head_dim: usize,
     /// Last `kernel-1` pre-activation conv inputs, `[conv_dim, kernel-1]`.
     conv: Vec<f32>,
     /// Recurrent state `[v_heads, k_dim, v_dim]`.
@@ -130,6 +134,184 @@ struct CacheLayer {
 pub struct Qwen35Cache {
     layers: Vec<CacheLayer>,
     len: usize,
+}
+
+impl Qwen35Cache {
+    /// Independent copy of the recurrent state and full-attention KV.
+    /// Linear-attention state is not a page; a branch has to clone the whole blob.
+    pub fn snapshot(&self) -> Result<Self> {
+        let mut layers = Vec::with_capacity(self.layers.len());
+        for layer in &self.layers {
+            layers.push(CacheLayer {
+                full: layer.full,
+                k: layer.k.clone(),
+                v: layer.v.clone(),
+                kv_heads: layer.kv_heads,
+                head_dim: layer.head_dim,
+                conv: layer.conv.clone(),
+                state: layer.state.clone(),
+                #[cfg(feature = "metal")]
+                gpu: match &layer.gpu {
+                    Some(gpu) => Some(gpu.snapshot()?),
+                    None => None,
+                },
+                #[cfg(feature = "metal")]
+                gpu_kv: match &layer.gpu_kv {
+                    Some(kv) => Some(kv.snapshot()?),
+                    None => None,
+                },
+            });
+        }
+        Ok(Self {
+            layers,
+            len: self.len,
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Host bytes of the recurrent state and full-attention KV.
+    /// GPU buffers are the source of truth after a Metal step.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&(self.len as u64).to_le_bytes());
+        out.extend_from_slice(&(self.layers.len() as u32).to_le_bytes());
+        for layer in &self.layers {
+            if layer.full {
+                out.push(2);
+                let (kv_len, kv_heads, head_dim, k, v) = layer.full_host();
+                out.extend_from_slice(&(kv_len as u32).to_le_bytes());
+                out.extend_from_slice(&(kv_heads as u32).to_le_bytes());
+                out.extend_from_slice(&(head_dim as u32).to_le_bytes());
+                push_f32(&mut out, &k);
+                push_f32(&mut out, &v);
+            } else {
+                out.push(1);
+                let (conv, state) = layer.linear_host();
+                push_f32(&mut out, &conv);
+                push_f32(&mut out, &state);
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut at = 0usize;
+        let version = take_u32(bytes, &mut at)?;
+        anyhow::ensure!(version == 1, "kv version {version}");
+        let len = take_u64(bytes, &mut at)? as usize;
+        let n = take_u32(bytes, &mut at)? as usize;
+        let mut layers = Vec::with_capacity(n);
+        for _ in 0..n {
+            let tag = take_u8(bytes, &mut at)?;
+            if tag == 2 {
+                let kv_len = take_u32(bytes, &mut at)? as usize;
+                let kv_heads = take_u32(bytes, &mut at)? as usize;
+                let head_dim = take_u32(bytes, &mut at)? as usize;
+                let k = take_f32(bytes, &mut at)?;
+                let v = take_f32(bytes, &mut at)?;
+                anyhow::ensure!(
+                    k.len() == kv_len * kv_heads * head_dim && k.len() == v.len(),
+                    "kv shape"
+                );
+                layers.push(CacheLayer {
+                    full: true,
+                    k,
+                    v,
+                    kv_heads,
+                    head_dim,
+                    conv: Vec::new(),
+                    state: Vec::new(),
+                    #[cfg(feature = "metal")]
+                    gpu: None,
+                    #[cfg(feature = "metal")]
+                    gpu_kv: None,
+                });
+            } else if tag == 1 {
+                let conv = take_f32(bytes, &mut at)?;
+                let state = take_f32(bytes, &mut at)?;
+                layers.push(CacheLayer {
+                    full: false,
+                    k: Vec::new(),
+                    v: Vec::new(),
+                    kv_heads: 0,
+                    head_dim: 0,
+                    conv,
+                    state,
+                    #[cfg(feature = "metal")]
+                    gpu: None,
+                    #[cfg(feature = "metal")]
+                    gpu_kv: None,
+                });
+            } else {
+                anyhow::bail!("bad kv layer tag {tag}");
+            }
+        }
+        anyhow::ensure!(at == bytes.len(), "kv trailing bytes");
+        Ok(Self { layers, len })
+    }
+}
+
+fn push_f32(out: &mut Vec<u8>, values: &[f32]) {
+    out.extend_from_slice(&(values.len() as u32).to_le_bytes());
+    for value in values {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+}
+
+fn take_u8(bytes: &[u8], at: &mut usize) -> Result<u8> {
+    anyhow::ensure!(*at < bytes.len(), "kv truncated");
+    let value = bytes[*at];
+    *at += 1;
+    Ok(value)
+}
+
+fn take_u32(bytes: &[u8], at: &mut usize) -> Result<u32> {
+    anyhow::ensure!(*at + 4 <= bytes.len(), "kv truncated");
+    let value = u32::from_le_bytes(bytes[*at..*at + 4].try_into().unwrap());
+    *at += 4;
+    Ok(value)
+}
+
+fn take_u64(bytes: &[u8], at: &mut usize) -> Result<u64> {
+    anyhow::ensure!(*at + 8 <= bytes.len(), "kv truncated");
+    let value = u64::from_le_bytes(bytes[*at..*at + 8].try_into().unwrap());
+    *at += 8;
+    Ok(value)
+}
+
+fn take_f32(bytes: &[u8], at: &mut usize) -> Result<Vec<f32>> {
+    let n = take_u32(bytes, at)? as usize;
+    anyhow::ensure!(*at + n * 4 <= bytes.len(), "kv truncated");
+    let mut values = Vec::with_capacity(n);
+    for _ in 0..n {
+        values.push(f32::from_le_bytes(bytes[*at..*at + 4].try_into().unwrap()));
+        *at += 4;
+    }
+    Ok(values)
+}
+
+impl CacheLayer {
+    fn linear_host(&self) -> (Vec<f32>, Vec<f32>) {
+        #[cfg(feature = "metal")]
+        if let Some(gpu) = &self.gpu {
+            return gpu.read_host();
+        }
+        (self.conv.clone(), self.state.clone())
+    }
+
+    fn full_host(&self) -> (usize, usize, usize, Vec<f32>, Vec<f32>) {
+        #[cfg(feature = "metal")]
+        if let Some(kv) = &self.gpu_kv {
+            return kv.read_host();
+        }
+        let width = self.kv_heads.saturating_mul(self.head_dim).max(1);
+        let kv_len = if self.k.is_empty() { 0 } else { self.k.len() / width };
+        (kv_len, self.kv_heads, self.head_dim, self.k.clone(), self.v.clone())
+    }
 }
 
 struct Store {
@@ -277,6 +459,10 @@ impl Qwen35 {
         self.vocab
     }
 
+    pub fn n_layers(&self) -> usize {
+        self.layers.len()
+    }
+
     pub fn new_cache(&self) -> Qwen35Cache {
         Qwen35Cache {
             layers: self
@@ -284,8 +470,11 @@ impl Qwen35 {
                 .iter()
                 .map(|layer| match &layer.mixer {
                     Mixer::Linear(attn) => CacheLayer {
+                        full: false,
                         k: Vec::new(),
                         v: Vec::new(),
+                        kv_heads: 0,
+                        head_dim: 0,
                         conv: vec![0.0; attn.conv_dim * (attn.kernel - 1)],
                         state: vec![0.0; attn.v_heads * attn.k_dim * attn.v_dim],
                         #[cfg(feature = "metal")]
@@ -293,9 +482,12 @@ impl Qwen35 {
                         #[cfg(feature = "metal")]
                         gpu_kv: None,
                     },
-                    Mixer::Full(_) => CacheLayer {
+                    Mixer::Full(attn) => CacheLayer {
+                        full: true,
                         k: Vec::new(),
                         v: Vec::new(),
+                        kv_heads: attn.kv_heads,
+                        head_dim: attn.head_dim,
                         conv: Vec::new(),
                         state: Vec::new(),
                         #[cfg(feature = "metal")]
@@ -319,7 +511,8 @@ impl Qwen35 {
     pub fn forward_greedy(&self, tokens: &[u32], cache: &mut Qwen35Cache) -> Result<(u32, f32)> {
         #[cfg(feature = "metal")]
         if tokens.len() == 1 && !self.device.is_cpu() {
-            return self.forward_greedy_metal(tokens, cache);
+            let (token, _) = self.forward_greedy_metal(tokens, cache)?;
+            return Ok(token);
         }
         let last = self.forward_hidden(tokens, cache)?;
         #[cfg(feature = "metal")]
@@ -336,12 +529,26 @@ impl Qwen35 {
             .unwrap())
     }
 
+    /// Feed `tokens`. Prefill all but the last, then return that position's logits.
+    pub fn forward_logits(&self, tokens: &[u32], cache: &mut Qwen35Cache) -> Result<Vec<f32>> {
+        anyhow::ensure!(!tokens.is_empty(), "empty feed");
+        #[cfg(feature = "metal")]
+        if !self.device.is_cpu() {
+            if tokens.len() > 1 {
+                self.prefill(&tokens[..tokens.len() - 1], cache)?;
+            }
+            let (_, logits) = self.forward_greedy_metal(&tokens[tokens.len() - 1..], cache)?;
+            return Ok(logits);
+        }
+        self.forward(tokens, cache)
+    }
+
     #[cfg(feature = "metal")]
     fn forward_greedy_metal(
         &self,
         tokens: &[u32],
         cache: &mut Qwen35Cache,
-    ) -> Result<(u32, f32)> {
+    ) -> Result<((u32, f32), Vec<f32>)> {
         anyhow::ensure!(tokens.len() == 1, "greedy metal decode");
         let id = tokens[0];
         anyhow::ensure!((id as usize) < self.vocab, "token {id} out of vocab");
@@ -425,7 +632,7 @@ impl Qwen35 {
                 t_setup - t_dequant
             );
         }
-        let out = crate::qwen3_fuse::fused_decode_greedy(
+        let out = crate::qwen3_fuse::fused_decode_logits(
             &[],
             &decode,
             &cos,
@@ -441,7 +648,13 @@ impl Qwen35 {
         if std::env::var("PAGODA_QWEN_DEBUG").is_ok() {
             eprintln!("  fused greedy {:.3}s", t.elapsed().as_secs_f64());
         }
-        Ok(out)
+        let token = out
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .map(|(i, v)| (i as u32, *v))
+            .context("empty logits")?;
+        Ok((token, out))
     }
 
     /// Teacher-forced next-token for each of `tokens` (1..=4) in one forward.
@@ -539,6 +752,96 @@ impl Qwen35 {
         )?;
         cache.len += batch;
         Ok(out)
+    }
+
+    /// Feed `tokens` into the cache. One setup, commits of 64 tokens, no lm_head.
+    #[cfg(feature = "metal")]
+    pub fn prefill(&self, tokens: &[u32], cache: &mut Qwen35Cache) -> Result<()> {
+        if tokens.is_empty() {
+            return Ok(());
+        }
+        anyhow::ensure!(!self.device.is_cpu(), "prefill is metal-only");
+        for &id in tokens {
+            anyhow::ensure!((id as usize) < self.vocab, "token {id} out of vocab");
+        }
+        let n = tokens.len();
+        let pos0 = cache.len;
+        let limit = self.layers.len();
+        self.ensure_metal_layers(limit, cache)?;
+        let mut kv_bases = Vec::new();
+        for li in 0..limit {
+            if matches!(self.layers[li].mixer, Mixer::Full(_)) {
+                let kv = cache.layers[li].gpu_kv.as_mut().unwrap();
+                kv_bases.push(kv.len);
+                kv.ensure_cap(kv.len + n)?;
+                kv.len += n;
+            }
+        }
+        let mut cos = Vec::with_capacity(n * self.rotary_dim);
+        let mut sin = Vec::with_capacity(n * self.rotary_dim);
+        for t in 0..n {
+            let (c, s) = rope_cos_sin(pos0 + t, self.rotary_dim, self.rope_theta);
+            cos.extend(c);
+            sin.extend(s);
+        }
+        let lin_guards: Vec<_> = (0..limit)
+            .filter(|&li| matches!(self.layers[li].mixer, Mixer::Linear(_)))
+            .map(|li| {
+                self.layers[li]
+                    .metal_linear
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+            })
+            .collect();
+        let full_guards: Vec<_> = (0..limit)
+            .filter(|&li| matches!(self.layers[li].mixer, Mixer::Full(_)))
+            .map(|li| {
+                self.layers[li]
+                    .metal_full
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+            })
+            .collect();
+        let mut decode = Vec::with_capacity(limit);
+        let mut lin_i = 0usize;
+        let mut full_i = 0usize;
+        for li in 0..limit {
+            match &self.layers[li].mixer {
+                Mixer::Linear(_) => {
+                    decode.push(crate::qwen3_fuse::DecodeLayer::Linear(
+                        lin_guards[lin_i].as_ref().unwrap(),
+                        cache.layers[li].gpu.as_ref().unwrap(),
+                    ));
+                    lin_i += 1;
+                }
+                Mixer::Full(_) => {
+                    decode.push(crate::qwen3_fuse::DecodeLayer::Full(
+                        full_guards[full_i].as_ref().unwrap(),
+                        cache.layers[li].gpu_kv.as_ref().unwrap(),
+                    ));
+                    full_i += 1;
+                }
+            }
+        }
+        let (lin_meta, full_meta, mid_n) = {
+            let first_lin = lin_guards[0].as_ref().unwrap();
+            let first_full = full_guards[0].as_ref().unwrap();
+            (first_lin.meta, first_full.meta, first_lin.gate.n_out())
+        };
+        let embed = self.embed.quant_cloned(&self.maps)?;
+        crate::qwen3_fuse::fused_prefill(
+            &embed,
+            tokens,
+            &decode,
+            &kv_bases,
+            &cos,
+            &sin,
+            &lin_meta,
+            &full_meta,
+            mid_n,
+        )?;
+        cache.len += n;
+        Ok(())
     }
 
     fn forward_hidden(&self, tokens: &[u32], cache: &mut Qwen35Cache) -> Result<Vec<f32>> {
@@ -668,6 +971,7 @@ impl Qwen35 {
 
     #[cfg(feature = "metal")]
     fn ensure_metal_layers(&self, limit: usize, cache: &mut Qwen35Cache) -> Result<()> {
+        let seq_len = cache.len;
         for li in 0..limit {
             let layer = &self.layers[li];
             match &layer.mixer {
@@ -715,11 +1019,19 @@ impl Qwen35 {
                 Mixer::Full(attn) => {
                     let cl = &mut cache.layers[li];
                     if cl.gpu_kv.is_none() {
-                        cl.gpu_kv = Some(crate::qwen3_fuse::GpuKv::new(
-                            attn.kv_heads,
-                            attn.head_dim,
-                            64,
-                        )?);
+                        let k = cl.k.clone();
+                        let v = cl.v.clone();
+                        cl.gpu_kv = Some(if k.is_empty() {
+                            crate::qwen3_fuse::GpuKv::new(attn.kv_heads, attn.head_dim, 64)?
+                        } else {
+                            crate::qwen3_fuse::GpuKv::from_host(
+                                attn.kv_heads,
+                                attn.head_dim,
+                                seq_len,
+                                &k,
+                                &v,
+                            )?
+                        });
                     }
                     let mut slot = layer.metal_full.lock().unwrap_or_else(|e| e.into_inner());
                     if slot.is_none() {
@@ -1591,6 +1903,48 @@ mod tests {
             assert!((g - e).abs() < 1e-3, "{g} vs {e}");
         }
         assert_eq!(packed[0] & 255, 255);
+    }
+
+    #[test]
+    fn kv_host_bytes_roundtrip() {
+        let cache = Qwen35Cache {
+            len: 2,
+            layers: vec![
+                CacheLayer {
+                    full: false,
+                    k: Vec::new(),
+                    v: Vec::new(),
+                    kv_heads: 0,
+                    head_dim: 0,
+                    conv: vec![1.0, 2.0],
+                    state: vec![3.0],
+                    #[cfg(feature = "metal")]
+                    gpu: None,
+                    #[cfg(feature = "metal")]
+                    gpu_kv: None,
+                },
+                CacheLayer {
+                    full: true,
+                    k: vec![4.0, 5.0, 6.0, 7.0],
+                    v: vec![8.0, 9.0, 10.0, 11.0],
+                    kv_heads: 1,
+                    head_dim: 2,
+                    conv: Vec::new(),
+                    state: Vec::new(),
+                    #[cfg(feature = "metal")]
+                    gpu: None,
+                    #[cfg(feature = "metal")]
+                    gpu_kv: None,
+                },
+            ],
+        };
+        let back = Qwen35Cache::from_bytes(&cache.to_bytes().unwrap()).unwrap();
+        assert_eq!(back.len, 2);
+        assert_eq!(back.layers[0].conv, vec![1.0, 2.0]);
+        assert_eq!(back.layers[0].state, vec![3.0]);
+        assert_eq!(back.layers[1].k, vec![4.0, 5.0, 6.0, 7.0]);
+        assert_eq!(back.layers[1].kv_heads, 1);
+        assert_eq!(back.layers[1].head_dim, 2);
     }
 
     fn bf16_round_trip(x: f32) -> f32 {
