@@ -21,6 +21,8 @@
 实现同一套 `ModelEngine` / `Tokenizer` trait（`HfTokenizer` + `CandleModel`）。该 crate
 需要联网下载依赖与模型权重，未在本离线沙箱内编译验证。
 
+Qwen3.8 Metal 权重面、交互窗（262144）与 CoT 行为见 [INFERENCE-DESIGN.md](INFERENCE-DESIGN.md)。
+
 ## 2. 架构
 
 ```

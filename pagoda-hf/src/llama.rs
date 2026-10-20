@@ -57,6 +57,28 @@ impl SessionKv {
         self.len
     }
 
+    /// Append this step's K/V at `layer` and return the full history.
+    ///
+    /// `k` and `v` are `[1, kv_heads, seq, head_dim]`. The returned tensors
+    /// share storage with the cache. Length does not move; call [`Self::advance`]
+    /// once after the whole forward succeeds.
+    pub fn push_kv(&mut self, layer: usize, k: Tensor, v: Tensor) -> Result<(Tensor, Tensor)> {
+        let (k, v) = match &self.layers[layer] {
+            Some((ck, cv)) => (
+                Tensor::cat(&[ck, &k], 2)?.contiguous()?,
+                Tensor::cat(&[cv, &v], 2)?.contiguous()?,
+            ),
+            None => (k.contiguous()?, v.contiguous()?),
+        };
+        self.layers[layer] = Some((k.clone(), v.clone()));
+        Ok((k, v))
+    }
+
+    /// Record that `n` tokens were pushed. [`Self::push_kv`] does not do this.
+    pub fn advance(&mut self, n: usize) {
+        self.len += n;
+    }
+
     /// A graftable view restricted to the first `len` tokens: per-layer
     /// narrows that share storage with the original. Exact by causality —
     /// the KV at position `i` depends only on tokens `0..=i`, so a sliced

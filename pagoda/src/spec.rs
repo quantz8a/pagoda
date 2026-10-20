@@ -109,6 +109,9 @@ impl Default for SamplingParams {
 pub struct WriteRequest {
     pub text: String,
     pub sampling: SamplingParams,
+    /// When set, the engine uses these ids instead of encoding `text`.
+    /// Qwen serving passes the already-fitted prompt so BPE is not round-tripped.
+    pub prompt_tokens: Option<Vec<TokenId>>,
 }
 
 impl WriteRequest {
@@ -116,6 +119,7 @@ impl WriteRequest {
         Self {
             text: text.into(),
             sampling,
+            prompt_tokens: None,
         }
     }
 }

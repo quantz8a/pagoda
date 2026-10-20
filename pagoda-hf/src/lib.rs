@@ -55,6 +55,16 @@ pub use candle_transformers::models::llama::LlamaConfig;
 
 pub mod llama;
 pub use llama::{OwnedLlama, SessionKv};
+pub mod qwen2_gguf;
+pub use qwen2_gguf::Qwen2Gguf;
+pub mod qwen3_5;
+pub mod qwen3_engine;
+pub use qwen3_engine::QwenEngine;
+pub use qwen3_5::{Qwen35, Qwen35Cache};
+#[cfg(feature = "metal")]
+mod qwen3_gemv;
+#[cfg(feature = "metal")]
+mod qwen3_fuse;
 pub mod vault;
 pub use vault::KvVault;
 pub mod laya;
@@ -231,6 +241,11 @@ pub trait CandleCausalLM: Send + Sync {
     ) -> Option<(Self::Cache, Option<Vec<f32>>)> {
         None
     }
+
+    /// Name reported by [`ModelEngine::name`].
+    fn engine_name(&self) -> &'static str {
+        "candle-llama"
+    }
 }
 
 /// Llama family over the vendored [`OwnedLlama`]: per-session [`SessionKv`]
@@ -385,16 +400,28 @@ fn kv_vault_bytes_from_env() -> usize {
 }
 
 impl CandleModel<LlamaCausalLM> {
-    /// Pick the compute device from `PAGODA_DEVICE`: `cpu` (default) or
-    /// `cuda` / `cuda:N`. CUDA requires building with `--features cuda`.
+    /// Pick the compute device from `PAGODA_DEVICE`.
+    ///
+    /// Unset or `cpu` stays on the CPU. `metal` requires
+    /// `cargo build --features metal` on Apple Silicon. `cuda` / `cuda:N`
+    /// require `--features cuda`. An unknown value is an error: a typo must
+    /// not silently run on the CPU.
     pub fn device_from_env() -> Result<Device> {
         match std::env::var("PAGODA_DEVICE").as_deref() {
-            Ok("cuda") => Device::new_cuda(0).context("PAGODA_DEVICE=cuda but no CUDA device"),
+            Ok("cpu") | Err(_) => Ok(Device::Cpu),
+            Ok("metal") => Device::new_metal(0).context(
+                "PAGODA_DEVICE=metal failed. Rebuild with --features metal on Apple Silicon",
+            ),
+            Ok("cuda") => Device::new_cuda(0).context(
+                "PAGODA_DEVICE=cuda failed. Rebuild with --features cuda on a CUDA machine",
+            ),
             Ok(other) if other.starts_with("cuda:") => {
                 let idx: usize = other[5..].parse().context("bad PAGODA_DEVICE index")?;
-                Device::new_cuda(idx).with_context(|| format!("no CUDA device {idx}"))
+                Device::new_cuda(idx).with_context(|| format!(
+                    "no CUDA device {idx}. Rebuild with --features cuda"
+                ))
             }
-            _ => Ok(Device::Cpu),
+            Ok(other) => anyhow::bail!("unknown PAGODA_DEVICE {other:?} (want cpu, metal, cuda, or cuda:N)"),
         }
     }
 
@@ -451,6 +478,20 @@ impl CandleModel<LlamaCausalLM> {
         }
     }
 
+    /// Dtype for a device. An explicit `PAGODA_DTYPE` always wins. On Metal,
+    /// the unset default is F16: that is the bandwidth-bound path Apple
+    /// Silicon actually serves.
+    pub fn dtype_for(device: &Device) -> Result<DType> {
+        if std::env::var("PAGODA_DTYPE").is_ok() {
+            return Self::dtype_from_env();
+        }
+        if device.is_metal() {
+            Ok(DType::F16)
+        } else {
+            Ok(DType::F32)
+        }
+    }
+
     /// Download `config.json` + `model.safetensors` from a HuggingFace repo and
     /// load them on the CPU.
     pub fn llama_from_hub(repo: &str) -> Result<Self> {
@@ -461,7 +502,32 @@ impl CandleModel<LlamaCausalLM> {
     pub fn llama_from_hub_on(repo: &str, device: Device) -> Result<Self> {
         let config_path = HfTokenizer::download(repo, "config.json")?;
         let weights_path = HfTokenizer::download(repo, "model.safetensors")?;
-        Self::llama_from_safetensors_as(config_path, &[weights_path], device, Self::dtype_from_env()?)
+        Self::llama_from_safetensors_as(
+            config_path,
+            &[weights_path],
+            device.clone(),
+            Self::dtype_for(&device)?,
+        )
+    }
+
+    /// Load one Qwen2 GGUF (Qwen2.5 Q4_K_M is the supported checkpoint) onto
+    /// `device`. Activations use [`Self::dtype_for`]: F16 on Metal unless
+    /// `PAGODA_DTYPE` is set. The quantized weights stay in the GGUF dtype.
+    pub fn qwen2_from_gguf(path: impl AsRef<Path>, device: Device) -> Result<CandleModel<Qwen2Gguf>> {
+        let dtype = Self::dtype_for(&device)?;
+        let model = Qwen2Gguf::load(path.as_ref(), &device, dtype)?;
+        let vocab_size = model.vocab_size();
+        Ok(CandleModel {
+            model: Arc::new(model),
+            device,
+            dtype,
+            vocab_size,
+            tokens_fed: Arc::new(AtomicU64::new(0)),
+            vault: Arc::new(Mutex::new(KvVault::with_budget(
+                kv_vault_entries_from_env(),
+                kv_vault_bytes_from_env(),
+            ))),
+        })
     }
 }
 
@@ -506,7 +572,7 @@ impl<M: CandleCausalLM + 'static> ModelEngine for CandleModel<M> {
     }
 
     fn name(&self) -> &'static str {
-        "candle-llama"
+        self.model.engine_name()
     }
 
     fn begin_session(&self) -> Option<Box<dyn ModelSession>> {

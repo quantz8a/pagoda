@@ -15,6 +15,42 @@ the toy n-gram + byte stand-ins with real artifacts:
 > model weights. It is **not** compiled or exercised by the offline
 > `cargo build --offline` / `cargo test --offline` loop inside `pagoda`.
 
+## Qwen3.8 27B（文本）
+
+MLX 目录，8-bit affine。只跑 `language_model`，不跑视觉塔。配置架构字段是 `qwen3_5`（源码 `Qwen35`），发布名是 Qwen3.8。和 mlx-serve 的贪心续写对过。
+
+```bash
+PAGODA_DEVICE=metal cargo run --release --features metal --example qwen3_8 -- \
+  --model ~/.mlx-serve/models/mlx-community/Qwen3.8-27B-8bit \
+  --prompt "Hi" --max-tokens 4
+```
+
+### `qwen3_server`（Codex / Hermes）
+
+```bash
+PAGODA_DEVICE=metal cargo build --release --features metal --bin qwen3_server
+PAGODA_DEVICE=metal ./target/release/qwen3_server \
+  --model ~/.mlx-serve/models/mlx-community/Qwen3.8-27B-8bit \
+  --port 8000
+```
+
+- 交互窗与模型上限一致：**262144**；`prompt + max_output` 超窗返回 400。
+- CoT 默认开；`reasoning.effort` 为 `none` / `off` / `minimal` 时合上。
+- 路由：`POST /v1/responses`、`/v1/chat/completions`、`/v1/completions`；并发 1。
+- 生成走 `pagoda::Engine` + `QwenEngine`（真实 KV 在 `QwenSession`）。设计见 [`../pagoda/docs/INFERENCE-DESIGN.md`](../pagoda/docs/INFERENCE-DESIGN.md)。
+
+## Apple Silicon
+
+```bash
+cargo build --release --features metal --example qwen2_gguf
+PAGODA_DEVICE=metal cargo run --release --features metal --example qwen2_gguf -- \
+  --gguf /path/to/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  --tokenizer-file /path/to/tokenizer.json
+```
+
+`PAGODA_DEVICE=metal` 在没有 `--features metal` 的二进制上会直接报错，不会悄悄退回 CPU。
+实测见 [`../pagoda/docs/BENCHMARK-METAL.md`](../pagoda/docs/BENCHMARK-METAL.md)。
+
 ## Build
 
 ```powershell
