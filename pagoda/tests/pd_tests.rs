@@ -305,10 +305,12 @@ fn router_prefix_affinity() {
     let mut router = pd::PrefixRouter::new(&workers).unwrap();
     let first = router.pick("hello world");
     router.record("hello world", first);
-    // Same prompt and a prefix-extension stick to the recorded worker.
+    // Same prompt sticks via exact-hash sticky; a prefix-extension via trie.
     assert_eq!(router.pick("hello world"), first);
+    assert!(router.sticky_hits() >= 1);
     assert_eq!(router.pick("hello world, again"), first);
-    // An unrelated prompt keeps spreading.
+    assert!(router.prefix_hits() >= 1);
+    // An unrelated prompt spreads on cold path; sticky on replay.
     let other = router.pick("zzz unrelated");
     router.record("zzz unrelated", other);
     assert_eq!(router.pick("zzz unrelated"), other);
@@ -321,6 +323,52 @@ fn router_prefix_affinity() {
         .filter_map(|w| w.get("routed").and_then(|n| n.as_f64()))
         .sum();
     assert_eq!(total, 2.0, "two recorded routes: {stats:?}");
+    assert_eq!(
+        pd::prompt_sticky_hash("hello world"),
+        pd::prompt_sticky_hash("hello world")
+    );
+    assert_ne!(
+        pd::prompt_sticky_hash("hello world"),
+        pd::prompt_sticky_hash("zzz unrelated")
+    );
+}
+
+/// Cold RR starts at worker 0; sticky rematch skips trie growth.
+#[test]
+fn router_cold_rr_and_sticky_skips_trie() {
+    let workers = vec![
+        "http://127.0.0.1:1".to_string(),
+        "http://127.0.0.1:2".to_string(),
+    ];
+    let mut router = pd::PrefixRouter::new(&workers).unwrap();
+    let a = router.pick("alpha");
+    router.record("alpha", a);
+    assert_eq!(a, 0, "first cold prompt must land on worker 0");
+    let nodes_after_first = {
+        let stats = pagoda::json::parse(&router.stats_json()).unwrap();
+        stats
+            .get("affinity_nodes")
+            .and_then(|n| n.as_f64())
+            .unwrap() as usize
+    };
+    // Rematch: sticky hit + record must not grow the character trie.
+    assert_eq!(router.pick("alpha"), 0);
+    router.record("alpha", 0);
+    let nodes_after_rematch = {
+        let stats = pagoda::json::parse(&router.stats_json()).unwrap();
+        stats
+            .get("affinity_nodes")
+            .and_then(|n| n.as_f64())
+            .unwrap() as usize
+    };
+    assert_eq!(
+        nodes_after_rematch, nodes_after_first,
+        "sticky rematch must skip trie walk/growth"
+    );
+    assert!(router.sticky_hits() >= 1);
+    let b = router.pick("beta-unrelated");
+    router.record("beta-unrelated", b);
+    assert_eq!(b, 1, "second cold prompt spreads to worker 1");
 }
 
 /// Raw HTTP/1.1 request returning the full wire response (for SSE reading).
